@@ -2,6 +2,7 @@
  * Shared key-validation logic used by both onboarding and the login command.
  */
 import type { ProviderName } from "./providers/index.js";
+import { VALIDATION_MODELS } from "./providers/index.js";
 
 export interface ValidationResult {
   ok: boolean;
@@ -25,7 +26,7 @@ export async function validateKeyDetailed(
       const { default: Anthropic } = await import("@anthropic-ai/sdk");
       const client = new Anthropic({ apiKey: key });
       await client.messages.create({
-        model: "claude-haiku-4-5",
+        model: VALIDATION_MODELS.anthropic,
         max_tokens: 5,
         messages: [{ role: "user", content: "hi" }],
       });
@@ -38,8 +39,7 @@ export async function validateKeyDetailed(
         provider === "google"
           ? "https://generativelanguage.googleapis.com/v1beta/openai/"
           : undefined;
-      // Use stable latest aliases so validation doesn't break when specific versions deprecate
-      const model = provider === "google" ? "gemini-flash-latest" : "gpt-4o-mini";
+      const model = VALIDATION_MODELS[provider];
       const client = new OpenAI({ apiKey: key, ...(baseURL ? { baseURL } : {}) });
       await client.chat.completions.create({
         model,

@@ -4,12 +4,11 @@ import { loadConfig, saveConfig, getApiKey } from "./config.js";
 import {
   createProvider,
   DEFAULT_MODELS,
+  ALL_PROVIDERS,
   type ProviderName,
   type Provider,
 } from "./providers/index.js";
 import { validateKeyDetailed } from "./auth.js";
-
-const ALL_PROVIDERS: ProviderName[] = ["anthropic", "openai", "google", "ollama"];
 
 // ── detection ──────────────────────────────────────────────────────────────
 

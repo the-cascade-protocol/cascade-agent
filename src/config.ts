@@ -26,13 +26,14 @@ export function loadConfig(): Config {
   try {
     return JSON.parse(readFileSync(CONFIG_FILE, "utf-8")) as Config;
   } catch {
+    process.stderr.write(`Warning: config file at ${CONFIG_FILE} is malformed and will be ignored. Delete it to reset.\n`);
     return {};
   }
 }
 
 export function saveConfig(config: Config): void {
-  mkdirSync(CONFIG_DIR, { recursive: true });
-  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), "utf-8");
+  mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), { encoding: "utf-8", mode: 0o600 });
 }
 
 /** Returns the API key for the given provider, checking env vars first.

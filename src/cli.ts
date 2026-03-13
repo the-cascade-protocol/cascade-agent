@@ -40,6 +40,7 @@ import {
 import {
   createProvider,
   DEFAULT_MODELS,
+  ALL_PROVIDERS,
   type ProviderName,
 } from "./providers/index.js";
 import { startRepl } from "./repl.js";
@@ -47,8 +48,6 @@ import { runAgent } from "./agent.js";
 import { needsOnboarding, runOnboarding } from "./onboarding.js";
 import { validateKeyDetailed } from "./auth.js";
 import { createSessionLogger, listLogs, LOG_DIR } from "./logger.js";
-
-const ALL_PROVIDERS: ProviderName[] = ["anthropic", "openai", "google", "ollama"];
 
 // ── helpers ────────────────────────────────────────────────────────────────
 

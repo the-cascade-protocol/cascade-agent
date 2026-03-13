@@ -2,7 +2,7 @@
  * Session logger — writes a markdown log file for every agent run.
  * Location: ~/.config/cascade-agent/logs/YYYY-MM-DD_HH-MM-SS.md
  */
-import { mkdirSync, writeFileSync, appendFileSync, readdirSync, statSync } from "fs";
+import { mkdirSync, writeFileSync, appendFileSync, readdirSync, statSync, unlinkSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
@@ -30,8 +30,24 @@ function slugTimestamp(): string {
     .replace(/\.\d+Z$/, "");
 }
 
+/** Delete oldest log files, keeping at most maxLogs. */
+function pruneOldLogs(maxLogs = 50): void {
+  try {
+    const files = readdirSync(LOG_DIR)
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => ({ name: f, mtime: statSync(join(LOG_DIR, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    for (const file of files.slice(maxLogs)) {
+      unlinkSync(join(LOG_DIR, file.name));
+    }
+  } catch {
+    // non-fatal — ignore pruning errors
+  }
+}
+
 export function createSessionLogger(provider: string, model: string): SessionLogger {
-  mkdirSync(LOG_DIR, { recursive: true });
+  mkdirSync(LOG_DIR, { recursive: true, mode: 0o700 });
+  pruneOldLogs();
 
   const filename = `${slugTimestamp()}.md`;
   const filePath = join(LOG_DIR, filename);
@@ -44,7 +60,7 @@ export function createSessionLogger(provider: string, model: string): SessionLog
     `- **Provider:** ${provider}\n` +
     `- **Model:** ${model}\n\n` +
     `---\n\n`,
-    "utf-8"
+    { encoding: "utf-8", mode: 0o600 }
   );
 
   let assistantBuffer = "";

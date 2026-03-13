@@ -3,12 +3,23 @@ import { AnthropicProvider } from "./anthropic.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
 import type { Config } from "../config.js";
 
+/** All supported provider names, in display order. */
+export const ALL_PROVIDERS: ProviderName[] = ["anthropic", "openai", "google", "ollama"];
+
 /** Default models per provider. */
 export const DEFAULT_MODELS: Record<ProviderName, string> = {
   anthropic: "claude-opus-4-6",
   openai: "gpt-4.1",           // latest as of Aug 2025 — check platform.openai.com/docs/models
   google: "gemini-flash-latest",  // free tier available via AI Studio — tracks latest flash automatically
   ollama: "llama3.2",
+};
+
+/** Cheapest/most-stable models used only for API key validation. */
+export const VALIDATION_MODELS: Record<ProviderName, string> = {
+  anthropic: "claude-haiku-4-5",
+  openai: "gpt-4o-mini",
+  google: "gemini-flash-latest",
+  ollama: "",
 };
 
 /** Base URLs for OpenAI-compatible backends that aren't api.openai.com. */

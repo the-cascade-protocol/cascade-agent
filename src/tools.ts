@@ -70,7 +70,7 @@ export function executeTool(name: string, input: ToolInput): string {
           timeout: 5 * 60 * 1000,
           encoding: "utf-8",
           maxBuffer: 1024 * 1024 * 20,
-          shell: "/bin/bash",
+          shell: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
         });
         return stdout.trim() || "(command succeeded with no output)";
       } catch (err) {
