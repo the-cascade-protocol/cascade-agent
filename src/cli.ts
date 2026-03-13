@@ -1,9 +1,19 @@
 #!/usr/bin/env node
 import readline from "readline";
 import { execSync } from "child_process";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+
+function readPackageVersion(): string {
+  try {
+    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
+    return pkg.version;
+  } catch {
+    return "unknown";
+  }
+}
 
 /** Walk up the directory tree from startDir until a .git folder is found. */
 function findGitRoot(startDir: string): string | null {
@@ -66,7 +76,7 @@ const program = new Command();
 program
   .name("cascade-agent")
   .description("Natural language interface for the Cascade Protocol CLI")
-  .version("0.1.0");
+  .version(readPackageVersion());
 
 // ── cascade-agent login ────────────────────────────────────────────────────
 
