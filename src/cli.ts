@@ -288,26 +288,48 @@ program
 
 program
   .command("upgrade")
-  .description("Rebuild from source (run after editing source files)")
+  .description("Pull latest changes from git and rebuild")
   .action(() => {
-    // Resolve the real path of this file (follows npm link symlink)
-    const thisFile = fileURLToPath(import.meta.url);
-    const projectRoot = findGitRoot(dirname(thisFile)) ?? dirname(dirname(thisFile));
+    const repoRoot = findGitRoot(dirname(fileURLToPath(import.meta.url)));
 
-    console.log(chalk.bold.cyan("\nCascade Agent — Rebuild\n"));
-    console.log(chalk.gray(`  Project: ${projectRoot}\n`));
+    console.log(chalk.bold.cyan("\nCascade Agent — Upgrade\n"));
+
+    if (!repoRoot) {
+      console.error(chalk.red("  Could not find a git repository."));
+      console.log(chalk.gray("  If you installed via npm link, run the upgrade manually:"));
+      console.log(chalk.gray("    cd <your-cascade-agent-repo>\n    git pull && npm run build\n"));
+      process.exit(1);
+    }
+
+    console.log(chalk.gray(`  Repo: ${repoRoot}\n`));
 
     try {
-      process.stdout.write(chalk.gray("  Building…  "));
-      execSync("npm run build", { cwd: projectRoot, stdio: "pipe" });
+      const before = execSync("git rev-parse --short HEAD", { cwd: repoRoot }).toString().trim();
+      console.log(chalk.gray(`  Current commit: ${before}`));
+
+      process.stdout.write(chalk.gray("  Pulling latest changes…  "));
+      execSync("git pull --ff-only", { cwd: repoRoot });
       console.log(chalk.green("✓"));
-      console.log(chalk.green("\n  ✓ Rebuild complete!\n"));
+
+      const after = execSync("git rev-parse --short HEAD", { cwd: repoRoot }).toString().trim();
+
+      if (before === after) {
+        console.log(chalk.gray("\n  Already up to date.\n"));
+      } else {
+        console.log(chalk.gray(`  Updated: ${before} → ${after}`));
+
+        process.stdout.write(chalk.gray("  Building…  "));
+        execSync("npm run build", { cwd: repoRoot, stdio: "pipe" });
+        console.log(chalk.green("✓"));
+
+        console.log(chalk.green("\n  ✓ Upgrade complete!\n"));
+      }
     } catch (err) {
       console.log(chalk.red("✗"));
       const msg = (err as Error).message;
       const detail = msg.split("\n").find(l => l.trim()) ?? msg;
       console.error(chalk.red(`\n  Error: ${detail}`));
-      console.log(chalk.gray(`\n  Manual rebuild:\n    cd ${projectRoot}\n    npm run build\n`));
+      console.log(chalk.gray(`\n  Manual upgrade:\n    cd ${repoRoot ?? "<repo>"}\n    git pull && npm run build\n`));
       process.exit(1);
     }
   });
