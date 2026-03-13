@@ -1,6 +1,6 @@
 {
   "name": "@the-cascade-protocol/agent",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Natural language interface for the Cascade Protocol CLI",
   "type": "module",
   "bin": {
