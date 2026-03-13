@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { tools, executeTool, type ToolInput } from "../tools.js";
-import { SYSTEM_PROMPT } from "../system-prompt.js";
+import { getSystemPrompt } from "../system-prompt.js";
 import type { Provider, SimpleMessage, AgentCallbacks } from "./types.js";
 
 export class AnthropicProvider implements Provider {
@@ -36,7 +36,7 @@ export class AnthropicProvider implements Provider {
       const stream = this.client.messages.stream({
         model: this.model,
         max_tokens: 4096,
-        system: SYSTEM_PROMPT,
+        system: getSystemPrompt(),
         tools: anthropicTools,
         messages: history,
       });

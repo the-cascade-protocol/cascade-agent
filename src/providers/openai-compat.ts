@@ -8,7 +8,7 @@
  */
 import OpenAI from "openai";
 import { tools, executeTool, type ToolInput } from "../tools.js";
-import { SYSTEM_PROMPT } from "../system-prompt.js";
+import { getSystemPrompt } from "../system-prompt.js";
 import type { Provider, SimpleMessage, AgentCallbacks, ProviderName } from "./types.js";
 
 // Convert our canonical tool definitions to OpenAI function-calling format.
@@ -98,7 +98,7 @@ export class OpenAICompatProvider implements Provider {
   ): Promise<string> {
     // Build the initial OpenAI message list for this turn
     const history: OpenAI.ChatCompletionMessageParam[] = [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: getSystemPrompt() },
       ...messages.map(
         (m): OpenAI.ChatCompletionMessageParam => ({
           role: m.role,

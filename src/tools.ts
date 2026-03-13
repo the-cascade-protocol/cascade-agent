@@ -15,18 +15,11 @@ export interface CanonicalTool {
 export const tools: CanonicalTool[] = [
   {
     name: "shell",
-    description: [
-      "Run a shell (bash) command and return stdout + stderr.",
-      "Use this for all Cascade Protocol CLI operations:",
-      "  cascade convert --from fhir --to cascade <file>",
-      "  cascade convert --from fhir --to cascade <file> > output.ttl",
-      "  cascade validate <file.ttl>",
-      "  cascade pod init <path>",
-      "  cascade capabilities",
-      "Also use for file system operations: ls, find, mkdir, wc -l, etc.",
-      "For batch work, construct a shell loop:",
-      '  for f in dir/*.json; do cascade convert --from fhir --to cascade "$f" > "out/${f%.json}.ttl"; done',
-    ].join("\n"),
+    description:
+      "Run a shell (bash) command and return stdout + stderr. " +
+      "Use for all Cascade Protocol CLI operations, file system work " +
+      "(ls, find, mkdir, wc, etc.), and network fetches (curl). " +
+      "For batch work, use a shell loop rather than repeated tool calls.",
     input_schema: {
       type: "object",
       properties: {

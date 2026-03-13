@@ -1,4 +1,5 @@
 import readline from "readline";
+import { execSync } from "child_process";
 import chalk from "chalk";
 import { runAgent, type SimpleMessage } from "./agent.js";
 import { createProvider, type ProviderName } from "./providers/index.js";
@@ -6,6 +7,7 @@ import type { Provider } from "./providers/types.js";
 import type { ToolInput } from "./tools.js";
 import { createSessionLogger, listLogs, LOG_DIR } from "./logger.js";
 import { loadConfig, resolveModel } from "./config.js";
+import { initSystemPrompt } from "./system-prompt.js";
 
 function formatToolStart(name: string, input: ToolInput): string {
   let detail = "";
@@ -53,6 +55,19 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
   let provider = initialProvider;
   let logger = createSessionLogger(provider.providerName, provider.model);
   let messages: SimpleMessage[] = [];
+
+  // Bootstrap CLI capabilities into the system prompt.
+  // Silent no-op if cascade is not installed or returns an error.
+  try {
+    const caps = execSync("cascade capabilities", {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    initSystemPrompt(caps);
+  } catch {
+    // cascade not found or failed — system prompt falls back to static content
+  }
 
   function printHeader(): void {
     console.log(

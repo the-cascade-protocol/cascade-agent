@@ -1,0 +1,13 @@
+{
+  "agentVersion": "0.1.1",
+  "cliVersion": "0.2.5",
+  "compatibleCliVersions": ">=0.2.0",
+  "releaseDate": "2026-03-13",
+  "releaseNotes": "Initial public release. Two-path upgrade command: npm registry path for installed users, git pull path for contributors.",
+  "install": "npm install -g @the-cascade-protocol/agent",
+  "upgrade": "cascade-agent upgrade",
+  "npm": "https://www.npmjs.com/package/@the-cascade-protocol/agent",
+  "github": "https://github.com/the-cascade-protocol/cascade-agent",
+  "docs": "https://cascadeprotocol.org",
+  "cliInstall": "https://github.com/the-cascade-protocol/cascade-cli"
+}
