@@ -288,19 +288,32 @@ program
 
 program
   .command("upgrade")
-  .description("Pull latest changes from git and rebuild")
+  .description("Upgrade to the latest version")
   .action(() => {
     const repoRoot = findGitRoot(dirname(fileURLToPath(import.meta.url)));
 
     console.log(chalk.bold.cyan("\nCascade Agent — Upgrade\n"));
 
+    // ── npm install path (no git repo) ────────────────────────────────────
     if (!repoRoot) {
-      console.error(chalk.red("  Could not find a git repository."));
-      console.log(chalk.gray("  If you installed via npm link, run the upgrade manually:"));
-      console.log(chalk.gray("    cd <your-cascade-agent-repo>\n    git pull && npm run build\n"));
-      process.exit(1);
+      console.log(chalk.gray("  Installed via npm — updating from registry…\n"));
+      try {
+        process.stdout.write(chalk.gray("  Installing latest version…  "));
+        execSync("npm install -g @the-cascade-protocol/agent@latest", { stdio: "pipe" });
+        console.log(chalk.green("✓"));
+        console.log(chalk.green("\n  ✓ Upgrade complete!\n"));
+      } catch (err) {
+        console.log(chalk.red("✗"));
+        const msg = (err as Error).message;
+        const detail = msg.split("\n").find(l => l.trim()) ?? msg;
+        console.error(chalk.red(`\n  Error: ${detail}`));
+        console.log(chalk.gray("\n  Manual upgrade:\n    npm install -g @the-cascade-protocol/agent@latest\n"));
+        process.exit(1);
+      }
+      return;
     }
 
+    // ── git / dev install path ────────────────────────────────────────────
     console.log(chalk.gray(`  Repo: ${repoRoot}\n`));
 
     try {
@@ -329,7 +342,7 @@ program
       const msg = (err as Error).message;
       const detail = msg.split("\n").find(l => l.trim()) ?? msg;
       console.error(chalk.red(`\n  Error: ${detail}`));
-      console.log(chalk.gray(`\n  Manual upgrade:\n    cd ${repoRoot ?? "<repo>"}\n    git pull && npm run build\n`));
+      console.log(chalk.gray(`\n  Manual upgrade:\n    cd ${repoRoot}\n    git pull && npm run build\n`));
       process.exit(1);
     }
   });
