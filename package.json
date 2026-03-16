@@ -1,10 +1,24 @@
 {
   "name": "@the-cascade-protocol/agent",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Natural language interface for the Cascade Protocol CLI",
   "type": "module",
   "bin": {
     "cascade-agent": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./providers": {
+      "import": "./dist/providers/index.js",
+      "types": "./dist/providers/index.d.ts"
+    },
+    "./tools": {
+      "import": "./dist/tools.js",
+      "types": "./dist/tools.d.ts"
+    }
   },
   "files": [
     "dist/",
