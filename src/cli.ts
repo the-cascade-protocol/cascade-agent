@@ -369,7 +369,7 @@ async function runOneShot(
   let lastToolName = "";
 
   try {
-    await runAgent(provider, [{ role: "user", content: prompt }], {
+    await runAgent(provider, [{ role: "user", content: prompt }], [], {
       onText: (d) => {
         process.stdout.write(d);
         logger.logAssistantText(d);
@@ -382,11 +382,12 @@ async function runOneShot(
         lastToolName = name;
         logger.logToolCall(name, input);
       },
-      onToolEnd: (result) => {
+      onToolEnd: (name, result) => {
+        lastToolName = name;
         process.stderr.write(
           chalk.gray("  ↳ " + result.split("\n").slice(0, 2).join(" ").slice(0, 120) + "\n")
         );
-        logger.logToolResult(lastToolName, result);
+        logger.logToolResult(name, result);
       },
     });
     process.stdout.write("\n");

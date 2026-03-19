@@ -1,0 +1,30 @@
+@prefix ldp: <http://www.w3.org/ns/ldp#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix cascade: <https://ns.cascadeprotocol.org/core/v1#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# =============================================================================
+# Root LDP Container
+# =============================================================================
+# This is the root index of this Cascade Pod, structured as an LDP Basic
+# Container per Solid Protocol conventions. It enumerates every resource
+# in the Pod for discoverability by agents and applications.
+#
+# Update this file as you add or remove resources.
+# =============================================================================
+
+<> a ldp:BasicContainer ;
+    dcterms:title "my-test-pod -- Cascade Pod" ;
+    dcterms:description "A Cascade Protocol Pod initialized with the cascade CLI." ;
+    dcterms:created "2026-03-13T19:50:33.947Z"^^xsd:dateTime ;
+    cascade:schemaVersion "1.3" ;
+
+    # ── Profile & Settings ──
+    ldp:contains
+        <profile/card.ttl> ,
+        <settings/publicTypeIndex.ttl> ,
+        <settings/privateTypeIndex.ttl> .
+
+    # ── Add clinical and wellness resources below as they are created ──
+    # ldp:contains <clinical/medications.ttl> .
+    # ldp:contains <wellness/heart-rate.ttl> .

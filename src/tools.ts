@@ -1,15 +1,24 @@
 import { execSync } from "child_process";
 import { readFileSync } from "fs";
 
+/** JSON Schema property descriptor used in tool input_schema. */
+export interface ToolPropertySchema {
+  type: string;
+  description?: string;
+  enum?: string[];
+  items?: { type: string };
+}
+
 // Provider-agnostic tool definition (Anthropic-compatible JSON Schema shape).
 export interface CanonicalTool {
   name: string;
   description: string;
   input_schema: {
     type: "object";
-    properties: Record<string, { type: string; description?: string }>;
+    properties: Record<string, ToolPropertySchema>;
     required?: string[];
   };
+  run?(input: ToolInput): unknown | Promise<unknown>;
 }
 
 export const tools: CanonicalTool[] = [
@@ -53,7 +62,9 @@ export const tools: CanonicalTool[] = [
   },
 ];
 
+/** Generic tool input — custom tools may have any string-keyed properties. */
 export interface ToolInput {
+  [key: string]: unknown;
   command?: string;
   cwd?: string;
   path?: string;

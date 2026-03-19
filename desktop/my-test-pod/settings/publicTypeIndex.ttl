@@ -1,0 +1,26 @@
+@prefix solid: <http://www.w3.org/ns/solid/terms#> .
+@prefix cascade: <https://ns.cascadeprotocol.org/core/v1#> .
+@prefix health: <https://ns.cascadeprotocol.org/health/v1#> .
+@prefix clinical: <https://ns.cascadeprotocol.org/clinical/v1#> .
+
+# =============================================================================
+# Public Type Index
+# =============================================================================
+# Maps data types to their storage locations in the Pod.
+# Public registrations are visible to authorized applications.
+#
+# As you populate your Pod with data, add type registrations here so that
+# agents and applications can discover where to find each data type.
+# =============================================================================
+
+<> a solid:TypeIndex, solid:ListedDocument .
+
+# Type registrations will be added as data is populated.
+# Example:
+# <#medications> a solid:TypeRegistration ;
+#     solid:forClass health:MedicationRecord ;
+#     solid:instance </clinical/medications.ttl> .
+#
+# <#conditions> a solid:TypeRegistration ;
+#     solid:forClass health:ConditionRecord ;
+#     solid:instance </clinical/conditions.ttl> .

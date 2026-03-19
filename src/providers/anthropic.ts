@@ -1,7 +1,22 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { tools, executeTool, type ToolInput } from "../tools.js";
+import { tools as builtinTools, executeTool, type ToolInput } from "../tools.js";
+import type { CanonicalTool } from "../tools.js";
 import { getSystemPrompt } from "../system-prompt.js";
 import type { Provider, SimpleMessage, AgentCallbacks } from "./types.js";
+
+/** Execute a tool: prefer custom tool's run() method; fall back to built-in executeTool(). */
+async function runTool(
+  name: string,
+  input: ToolInput,
+  customTools: CanonicalTool[]
+): Promise<string> {
+  const custom = customTools.find((t) => t.name === name);
+  if (custom?.run) {
+    const result = await custom.run(input);
+    return typeof result === "string" ? result : JSON.stringify(result);
+  }
+  return executeTool(name, input);
+}
 
 export class AnthropicProvider implements Provider {
   readonly providerName = "anthropic" as const;
@@ -20,8 +35,16 @@ export class AnthropicProvider implements Provider {
 
   async runTurn(
     messages: SimpleMessage[],
+    customTools: CanonicalTool[],
     callbacks: AgentCallbacks
   ): Promise<string> {
+    // Merge custom tools with built-in tools; custom tools take precedence on name collision.
+    const customNames = new Set(customTools.map((t) => t.name));
+    const allTools: CanonicalTool[] = [
+      ...customTools,
+      ...builtinTools.filter((t) => !customNames.has(t.name)),
+    ];
+
     // Convert simple messages to Anthropic format
     let history: Anthropic.MessageParam[] = messages.map((m) => ({
       role: m.role,
@@ -29,7 +52,7 @@ export class AnthropicProvider implements Provider {
     }));
 
     // Cast tools — CanonicalTool is structurally identical to Anthropic.Tool
-    const anthropicTools = tools as unknown as Anthropic.Tool[];
+    const anthropicTools = allTools as unknown as Anthropic.Tool[];
     let finalText = "";
 
     while (true) {
@@ -61,8 +84,8 @@ export class AnthropicProvider implements Provider {
         if (block.type !== "tool_use") continue;
         const input = block.input as ToolInput;
         callbacks.onToolStart(block.name, input);
-        const result = executeTool(block.name, input);
-        callbacks.onToolEnd(result);
+        const result = await runTool(block.name, input, customTools);
+        callbacks.onToolEnd(block.name, result);
         toolResults.push({
           type: "tool_result",
           tool_use_id: block.id,

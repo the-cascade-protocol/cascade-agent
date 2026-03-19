@@ -248,7 +248,7 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
       let lastToolName = "";
 
       try {
-        messages = await runAgent(provider, messages, {
+        messages = await runAgent(provider, messages, [], {
           onText(delta) {
             textStarted = true;
             process.stdout.write(chalk.white(delta));
@@ -260,9 +260,10 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
             lastToolName = name;
             logger.logToolCall(name, toolInput);
           },
-          onToolEnd(result) {
+          onToolEnd(name, result) {
+            lastToolName = name;
             console.log(formatToolEnd(result));
-            logger.logToolResult(lastToolName, result);
+            logger.logToolResult(name, result);
           },
         });
       } catch (err) {

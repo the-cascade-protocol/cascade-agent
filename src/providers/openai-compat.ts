@@ -7,13 +7,14 @@
  *   • ollama  — localhost:11434/v1      (local models, no key required)
  */
 import OpenAI from "openai";
-import { tools, executeTool, type ToolInput } from "../tools.js";
+import { tools as builtinTools, executeTool, type ToolInput } from "../tools.js";
+import type { CanonicalTool } from "../tools.js";
 import { getSystemPrompt } from "../system-prompt.js";
 import type { Provider, SimpleMessage, AgentCallbacks, ProviderName } from "./types.js";
 
-// Convert our canonical tool definitions to OpenAI function-calling format.
-function toOpenAITools(): OpenAI.ChatCompletionTool[] {
-  return tools.map((t) => ({
+// Convert canonical tool definitions to OpenAI function-calling format.
+function toOpenAITools(allTools: CanonicalTool[]): OpenAI.ChatCompletionTool[] {
+  return allTools.map((t) => ({
     type: "function" as const,
     function: {
       name: t.name,
@@ -21,6 +22,20 @@ function toOpenAITools(): OpenAI.ChatCompletionTool[] {
       parameters: t.input_schema as unknown as Record<string, unknown>,
     },
   }));
+}
+
+/** Execute a tool: prefer custom tool's run() method; fall back to built-in executeTool(). */
+async function runTool(
+  name: string,
+  input: ToolInput,
+  customTools: CanonicalTool[]
+): Promise<string> {
+  const custom = customTools.find((t) => t.name === name);
+  if (custom?.run) {
+    const result = await custom.run(input);
+    return typeof result === "string" ? result : JSON.stringify(result);
+  }
+  return executeTool(name, input);
 }
 
 export class OpenAICompatProvider implements Provider {
@@ -94,8 +109,16 @@ export class OpenAICompatProvider implements Provider {
 
   async runTurn(
     messages: SimpleMessage[],
+    customTools: CanonicalTool[],
     callbacks: AgentCallbacks
   ): Promise<string> {
+    // Merge custom tools with built-in tools; custom tools take precedence on name collision.
+    const customNames = new Set(customTools.map((t) => t.name));
+    const allTools: CanonicalTool[] = [
+      ...customTools,
+      ...builtinTools.filter((t) => !customNames.has(t.name)),
+    ];
+
     // Build the initial OpenAI message list for this turn
     const history: OpenAI.ChatCompletionMessageParam[] = [
       { role: "system", content: getSystemPrompt() },
@@ -107,7 +130,7 @@ export class OpenAICompatProvider implements Provider {
       ),
     ];
 
-    const openAITools = toOpenAITools();
+    const openAITools = toOpenAITools(allTools);
     let finalText = "";
 
     while (true) {
@@ -176,8 +199,8 @@ export class OpenAICompatProvider implements Provider {
           input = {};
         }
         callbacks.onToolStart(c.name, input);
-        const result = executeTool(c.name, input);
-        callbacks.onToolEnd(result);
+        const result = await runTool(c.name, input, customTools);
+        callbacks.onToolEnd(c.name, result);
 
         history.push({
           role: "tool",

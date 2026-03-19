@@ -1,0 +1,10 @@
+{
+  "@context": "https://www.w3.org/ns/solid/terms",
+  "pod_root": "/",
+  "profile": "/profile/card.ttl#me",
+  "storage": "/",
+  "publicTypeIndex": "/settings/publicTypeIndex.ttl",
+  "privateTypeIndex": "/settings/privateTypeIndex.ttl",
+  "podUri": "file:///Users/jedr/Documents/Development/cascade-agent/desktop/my-test-pod/",
+  "version": "1.0"
+}

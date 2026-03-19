@@ -30,7 +30,17 @@ Behavioural rules:
   • For batch work, write a shell loop rather than repeating tool calls.
   • Prefer --json flags when you need parseable output.
   • For version / release info, fetch the agent manifest:
-      curl -s ${MANIFEST_URL}`;
+      curl -s ${MANIFEST_URL}
+
+Pod query field notes:
+  • Condition records: use health:snomedSemanticTag to distinguish clinical from administrative.
+    "disorder" = clinical condition; "finding" = may be social/contextual; "situation" = usually social.
+    Filter for clinical-only: select(.properties."health:snomedSemanticTag" == "disorder")
+  • Medication records: health:medicationName (not drugName), health:isActive "true"/"false" (string).
+  • Lab result records: health:testName, health:resultValue, health:resultUnit, health:performedDate.
+  • All --json output shape: { dataTypes: { [type]: { count, file, records: [{id, type, properties}] } } }
+  • Always run cascade pod query with --json and pipe to jq for structured analysis.
+  • When a user asks about "conditions", default to filtering for snomedSemanticTag == "disorder" unless they explicitly ask for social history or all findings.`;
 
 let _capabilities: string | undefined;
 

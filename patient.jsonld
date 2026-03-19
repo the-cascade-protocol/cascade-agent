@@ -1,0 +1,14 @@
+{
+  "resourceType": "Patient",
+  "birthDate": "1926-05-30",
+  "gender": "male",
+  "maritalStatus": {
+    "coding": [
+      {
+        "code": "D"
+      }
+    ],
+    "text": "divorced"
+  },
+  "id": "8619df61-7d1c-e0c4-588a-f1434a385d35"
+}
