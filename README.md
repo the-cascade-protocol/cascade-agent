@@ -42,8 +42,8 @@ Cascade Agent specifically wraps the [Cascade CLI](https://cascadeprotocol.org/d
 
 **Relevant docs:**
 - [Cascade Protocol Overview](https://cascadeprotocol.org/docs/)
-- [Clinical Vocabulary (v1.6)](https://cascadeprotocol.org/docs/) — EHR records, medications, labs, conditions
-- [Health Vocabulary (v2.2)](https://cascadeprotocol.org/docs/) — device data, wellness observations
+- [Clinical Vocabulary (v1.7)](https://cascadeprotocol.org/docs/) — EHR records, medications, labs, conditions
+- [Health Vocabulary (v2.3)](https://cascadeprotocol.org/docs/) — device data, wellness observations
 - [Security & Compliance](https://cascadeprotocol.org/docs/) — HIPAA alignment, local-first architecture
 - [CLI Reference](https://cascadeprotocol.org/docs/) — full command documentation
 
