@@ -239,7 +239,8 @@ program
   .argument("[prompt]", "One-shot prompt (omit for interactive REPL)")
   .option("-p, --provider <name>", "Provider to use for this run")
   .option("-m, --model <model>",   "Model override for this run")
-  .action(async (prompt: string | undefined, opts: { provider?: string; model?: string }) => {
+  .option("-s, --script <file>",   "Run questions from a file (one per line), then exit")
+  .action(async (prompt: string | undefined, opts: { provider?: string; model?: string; script?: string }) => {
     const config = loadConfig();
     const providerName = (opts.provider as ProviderName) ?? config.activeProvider ?? "anthropic";
 
@@ -262,7 +263,9 @@ program
       opts.model ? resolveModel(opts.model) : undefined
     );
 
-    if (prompt) {
+    if (opts.script) {
+      await runScript(provider, opts.script);
+    } else if (prompt) {
       await runOneShot(provider, prompt);
     } else {
       await startRepl(provider);
@@ -357,6 +360,86 @@ program
   });
 
 program.parse();
+
+// ── script runner ──────────────────────────────────────────────────────────
+
+async function runScript(
+  provider: ReturnType<typeof createProvider>,
+  scriptPath: string,
+): Promise<void> {
+  const { runAgent } = await import("./agent.js");
+  type SimpleMessage = import("./agent.js").SimpleMessage;
+  const { initSystemPrompt } = await import("./system-prompt.js");
+  const { createSessionLogger } = await import("./logger.js");
+
+  let questions: string[];
+  try {
+    questions = readFileSync(scriptPath, "utf-8")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith("#"));
+  } catch {
+    console.error(chalk.red(`Cannot read script file: ${scriptPath}`));
+    process.exit(1);
+  }
+
+  if (questions.length === 0) {
+    console.error(chalk.red("Script file is empty."));
+    process.exit(1);
+  }
+
+  // Bootstrap CLI capabilities
+  try {
+    const caps = execSync("cascade capabilities", { encoding: "utf-8", timeout: 5000, stdio: ["pipe","pipe","pipe"] }).trim();
+    initSystemPrompt(caps);
+  } catch { /* silent */ }
+
+  const logger = createSessionLogger(provider.providerName, provider.model);
+  let messages: SimpleMessage[] = [];
+
+  console.log(`\n${chalk.bold.cyan("Cascade Agent")} ${chalk.gray(`(${provider.providerName} / ${provider.model})`)}`);
+  console.log(chalk.gray(`  Session log: ${logger.filePath}\n`));
+
+  for (const question of questions) {
+    console.log(chalk.green("▶ ") + question + "\n");
+    logger.logUserMessage(question);
+    messages = [...messages, { role: "user" as const, content: question }];
+    let textStarted = false;
+
+    try {
+      messages = await runAgent(provider, messages, [], {
+        onText(delta) {
+          textStarted = true;
+          process.stdout.write(chalk.white(delta));
+          logger.logAssistantText(delta);
+        },
+        onToolStart(name, input) {
+          if (textStarted) { process.stdout.write("\n"); textStarted = false; }
+          const detail = name === "shell" && input.command
+            ? chalk.gray(` $ ${String(input.command).slice(0, 100)}`)
+            : "";
+          console.log(chalk.yellow(`  ⚙ ${name}`) + detail);
+          logger.logToolCall(name, input);
+        },
+        onToolEnd(_name, result) {
+          const lines = result.split("\n");
+          const preview = lines.slice(0, 3).join("\n");
+          const suffix = lines.length > 3 ? chalk.gray(`\n  … (${lines.length} lines)`) : "";
+          console.log(chalk.gray("  ↳ ") + chalk.dim(preview) + suffix);
+          logger.logToolResult(_name, result);
+        },
+      });
+    } catch (err) {
+      const msg = (err as Error).message;
+      console.error(chalk.red(`\nError: ${msg}`));
+      logger.logError(msg);
+    }
+
+    process.stdout.write("\n\n");
+  }
+
+  logger.close();
+}
 
 // ── shared one-shot runner ─────────────────────────────────────────────────
 

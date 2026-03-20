@@ -87,7 +87,7 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    terminal: true,
+    terminal: process.stdin.isTTY ?? true,
     prompt: chalk.green("▶ "),
   });
 
