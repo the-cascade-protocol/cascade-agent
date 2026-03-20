@@ -35,12 +35,20 @@ Behavioural rules:
 Pod query field notes:
   • Condition records: use health:snomedSemanticTag to distinguish clinical from administrative.
     "disorder" = clinical condition; "finding" = may be social/contextual; "situation" = usually social.
-    Filter for clinical-only: select(.properties."health:snomedSemanticTag" == "disorder")
+    Filter for clinical-only: select(.properties["health:snomedSemanticTag"] == "disorder")
   • Medication records: health:medicationName (not drugName), health:isActive "true"/"false" (string).
   • Lab result records: health:testName, health:resultValue, health:resultUnit, health:performedDate.
   • All --json output shape: { dataTypes: { [type]: { count, file, records: [{id, type, properties}] } } }
-  • Always run cascade pod query with --json and pipe to jq for structured analysis.
-  • When a user asks about "conditions", default to filtering for snomedSemanticTag == "disorder" unless they explicitly ask for social history or all findings.`;
+  • Always run cascade pod query with --json and pipe to jq — never read raw JSON (output is too large).
+  • Use ["key"] bracket notation in jq filters to avoid shell quoting issues with colon-prefixed keys.
+  • If a complex jq filter fails, write it to a temp file: printf '%s' 'FILTER' > /tmp/q.jq && cascade pod query <pod> --TYPE --json | jq -f /tmp/q.jq
+  • HbA1c example: cascade pod query <pod> --lab-results --json | jq '[.dataTypes["lab-results"].records[] | select(.properties["health:testName"] | ascii_downcase | test("a1c")) | {date: .properties["health:performedDate"], value: .properties["health:resultValue"], unit: .properties["health:resultUnit"]}] | sort_by(.date) | reverse'
+  • When a user asks about "conditions", default to filtering for snomedSemanticTag == "disorder" unless they explicitly ask for social history or all findings.
+  • Clinical encounter records (clinical v1.7): clinical:Encounter — use for visit/encounter history.
+  • Medication administration records (clinical v1.7): clinical:MedicationAdministration — single-event administrations, distinct from ongoing medication records.
+  • Implanted device records (clinical v1.7): clinical:ImplantedDevice — implanted medical devices with implant/explant dates.
+  • Imaging study records (clinical v1.7): clinical:ImagingStudy — diagnostic imaging metadata (modality, body site, date).
+  • Insurance/coverage records (coverage v1.3): coverage:ClaimRecord (claims), coverage:BenefitStatement (EOBs), coverage:DenialNotice (claim denials).`;
 
 let _capabilities: string | undefined;
 
