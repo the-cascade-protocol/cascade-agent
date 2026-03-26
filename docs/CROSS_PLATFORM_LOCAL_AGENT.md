@@ -15,7 +15,7 @@ The guiding principle: **one codebase, many runtimes**.
 
 | Platform | Runtime | LLM Backend | Shell Access | Notes |
 |----------|---------|-------------|--------------|-------|
-| **macOS / Linux / Windows** | Node.js 18+ | Ollama, llama.cpp, cloud APIs | Full | Current target — already works |
+| **macOS / Linux / Windows** | Node.js 18+ | llama.cpp server, Ollama, vLLM, cloud APIs | Full | Current target — already works |
 | **iOS** | React Native / Capacitor | llama.cpp (via GGML), MLX | Sandbox only | App Store constraints |
 | **Android** | React Native / Capacitor | llama.cpp (via GGML) | Termux or sandbox | Play Store constraints |
 | **Browser (PWA)** | Service Worker + WASM | WebLLM (wasm llama.cpp) | None | Offline-first via cache |
@@ -31,42 +31,101 @@ The guiding principle: **one codebase, many runtimes**.
 
 | Model | Params | Quantization | RAM/VRAM | Strengths |
 |-------|--------|-------------|----------|-----------|
-| Qwen 2.5 72B | 72B | Q4_K_M | ~42 GB | Best tool-calling in open weights |
+| Qwen3.5 27B | 27B | Q4_K_M | ~16 GB | Agentic training, 262K context, multimodal |
+| Qwen 2.5 72B | 72B | Q4_K_M | ~42 GB | Proven tool-calling reliability |
 | Llama 3.3 70B | 70B | Q4_K_M | ~40 GB | Strong reasoning, broad training |
-| Mistral Large 2 | 123B | Q4_K_M | ~70 GB | Native function calling |
 
 **Tier 2 — Laptop / Desktop CPU (8-16 GB RAM)**
 
 | Model | Params | Quantization | RAM | Strengths |
 |-------|--------|-------------|-----|-----------|
-| Qwen 2.5 7B | 7B | Q4_K_M | ~5 GB | Best tool-calling at this size |
+| Qwen3.5 9B | 9B | Q4_K_M | ~6 GB | Native agentic tool-calling, 262K context, vision |
+| Qwen3.5 4B | 4B | Q4_K_M | ~3 GB | Best quality-per-GB at this tier |
+| Qwen 2.5 7B | 7B | Q4_K_M | ~5 GB | Mature ecosystem, Ollama-compatible |
 | Phi-4 14B | 14B | Q4_K_M | ~9 GB | Strong structured output |
-| Mistral Nemo 12B | 12B | Q4_K_M | ~8 GB | Good general reasoning |
-| Llama 3.2 3B | 3B | Q8_0 | ~3.5 GB | Current Ollama default; runs anywhere |
 
-**Tier 3 — Mobile / Embedded (2-4 GB RAM)**
+**Tier 3 — Mobile / Embedded (2-4 GB RAM)** ⭐ _Qwen3.5-2B is the new sweet spot_
 
 | Model | Params | Quantization | RAM | Strengths |
 |-------|--------|-------------|-----|-----------|
-| Qwen 2.5 3B | 3B | Q4_K_M | ~2 GB | Better tool-calling than Llama 3B |
-| Llama 3.2 1B | 1B | Q8_0 | ~1.2 GB | Fits on phones, Pi Zero 2 |
-| Phi-3.5 Mini 3.8B | 3.8B | Q4_K_M | ~2.5 GB | Punches above weight class |
+| **Qwen3.5 2B** | **2B** | **Q4_K_M** | **~1.5 GB** | **Native agentic training, 262K context, multimodal, think/non-think modes** |
+| Qwen3.5 0.8B | 0.8B | Q8_0 | ~1 GB | Ultra-constrained devices (Pi Zero, old phones) |
+| Llama 3.2 3B | 3B | Q8_0 | ~3.5 GB | Fallback if Ollama required (Qwen3.5 not yet supported) |
 
 **Tier 4 — Browser (WASM, limited memory)**
 
 | Model | Params | Quantization | RAM | Notes |
 |-------|--------|-------------|-----|-------|
-| SmolLM2 1.7B | 1.7B | Q4_0 | ~1 GB | Designed for on-device |
-| Llama 3.2 1B | 1B | Q4_0 | ~0.7 GB | Minimum viable reasoning |
+| **Qwen3.5 2B** | **2B** | **Q4_0** | **~1.2 GB** | Best-in-class tool-calling for WASM target |
+| Qwen3.5 0.8B | 0.8B | Q4_0 | ~0.5 GB | Minimum viable for very constrained browsers |
 
 ### Recommended Default per Platform
 
 | Platform | Default Model | Rationale |
 |----------|--------------|-----------|
-| Desktop (Ollama) | `qwen2.5:7b` | Best tool-call fidelity at reasonable size |
-| Mobile | `qwen2.5:3b` | Fits in 2 GB, decent function calling |
-| Browser | `smollm2:1.7b` | WASM-friendly, fast inference |
-| Embedded (Pi 4+) | `llama3.2:3b` | Proven, low RAM, current default |
+| Desktop (llama.cpp server) | `qwen3.5:9b` | Best balance of quality and speed; agentic training |
+| Desktop (Ollama fallback) | `qwen2.5:7b` | Ollama doesn't support Qwen3.5 yet (see §2a) |
+| Mobile | `qwen3.5:2b` | 1.5 GB RAM, native tool-calling, 262K context |
+| Browser | `qwen3.5:2b` | Same model across mobile/browser for consistency |
+| Embedded (Pi 4+) | `qwen3.5:2b` | Fits in 2 GB with room to spare |
+| Ultra-constrained | `qwen3.5:0.8b` | Pi Zero 2, budget phones, minimal browsers |
+
+### Why Qwen3.5-2B over previous picks
+
+- **vs Qwen 2.5 3B**: Smaller (2B < 3B), yet trained specifically for agentic tool-calling. 262K context vs 32K. Adds vision.
+- **vs Llama 3.2 3B**: Better tool-call fidelity from purpose-built agentic training. Think/non-think mode toggle saves battery on simple queries.
+- **vs SmolLM2 1.7B**: Similar size but vastly better at structured output and function calling.
+
+---
+
+## 2a. Model Sourcing & Runtime Backends
+
+**Ollama is NOT required.** It's one option for desktop, but Qwen3.5 models don't work in Ollama yet (due to separate mmproj vision files). Here are all the ways to source and run models:
+
+### Where to download models
+
+| Source | Format | How |
+|--------|--------|-----|
+| **Hugging Face (official)** | GGUF | `huggingface-cli download Qwen/Qwen3.5-2B-GGUF` |
+| **Hugging Face (Unsloth)** | GGUF (optimized quants) | `huggingface-cli download unsloth/Qwen3.5-2B-GGUF` |
+| **Ollama registry** | Ollama blob | `ollama pull qwen2.5:7b` (Qwen3.5 not yet available) |
+| **llama.cpp -hf flag** | Auto-download GGUF | `llama-server -hf Qwen/Qwen3.5-2B-GGUF:Q4_K_M` |
+
+### Runtime backends by platform
+
+| Backend | Platforms | OpenAI-compat API | Notes |
+|---------|-----------|-------------------|-------|
+| **llama.cpp (server mode)** | Desktop, Linux, Pi | Yes (`/v1/chat/completions`) | **Recommended for Qwen3.5.** Run `llama-server -m model.gguf` and point the agent at `http://localhost:8080/v1` |
+| **Ollama** | Desktop, Linux, Pi | Yes (`/v1/chat/completions`) | Easiest setup but **no Qwen3.5 support yet**. Good for Qwen 2.5, Llama 3.x |
+| **llama.cpp (in-process)** | Mobile (via react-native-llama), embedded | N/A (native bindings) | No HTTP server needed; model runs in-app |
+| **WebLLM / wasm llama.cpp** | Browser | N/A (JS API) | GGUF loaded into WASM runtime; ~2x slower than native |
+| **vLLM / SGLang** | Server GPU | Yes | Production serving for multi-user deployments |
+| **MLX** | macOS (Apple Silicon) | Community wrappers | Good Metal acceleration; alternative to llama.cpp on Mac |
+
+### How the agent connects (no code changes needed for llama.cpp)
+
+The existing `openai-compat` provider works with **any** backend that serves the OpenAI Chat Completions API. To use llama.cpp server instead of Ollama:
+
+```bash
+# 1. Start llama.cpp server (one-time)
+llama-server -hf Qwen/Qwen3.5-2B-GGUF:Q4_K_M --port 8080
+
+# 2. Configure the agent to point at it
+cascade-agent provider ollama          # reuses the "ollama" provider type
+cascade-agent model qwen3.5-2b        # any name — passed through to server
+# Or set OLLAMA_HOST=http://localhost:8080 if using non-default port
+```
+
+Since llama.cpp's server speaks the same OpenAI-compatible API as Ollama (at `/v1/chat/completions`), the agent's existing `OpenAICompatProvider` works unmodified. The only change needed is the base URL, which the config already supports via `providers.ollama.baseUrl`.
+
+### Recommended quantizations
+
+| Device RAM | Quantization | Quality | File size (2B) |
+|-----------|-------------|---------|----------------|
+| ≥4 GB | Q8_0 | Best | ~2.2 GB |
+| 2-4 GB | **Q4_K_M** | **Recommended** | **~1.3 GB** |
+| 1-2 GB | Q4_0 | Good | ~1.1 GB |
+| <1 GB | UD-Q2_K_XL | Minimum viable | ~0.7 GB |
 
 ---
 
@@ -347,10 +406,12 @@ export type ProviderName =
 ## 11. Open Questions
 
 1. **Should we vendor a jq WASM build** instead of writing a mini-jq? (Tradeoff: ~2 MB binary vs. limited but tiny implementation)
-2. **Model distribution for mobile** — bundle a Q4 model in the app binary (~1.5 GB) or download on first launch?
+2. **Model distribution for mobile** — bundle a Q4 model in the app binary (~1.3 GB for Qwen3.5-2B) or download on first launch?
 3. **Should browser target support cloud providers** or be local-only? (CORS makes direct API calls messy; a proxy adds complexity)
 4. **React Native vs Capacitor** for mobile — RN has better llama.cpp bindings today, Capacitor shares more web code
-5. **Minimum viable tool-calling** — small models often fail at structured tool-call output. Should we use grammar-constrained decoding or fall back to regex parsing of freeform text?
+5. **Minimum viable tool-calling** — Qwen3.5-2B has native agentic training, but should we still add grammar-constrained decoding as a safety net for smaller quants (Q2)?
+6. **Ollama Qwen3.5 timeline** — Ollama doesn't support Qwen3.5 yet (mmproj issue). Do we wait, or make llama.cpp server the primary local backend now? (Recommendation: support both, default to llama.cpp)
+7. **Think vs non-think mode switching** — Qwen3.5 supports toggling reasoning on/off. Should the agent auto-select based on query complexity, or expose a user toggle?
 
 ---
 
