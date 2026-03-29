@@ -395,9 +395,10 @@ program
   .command("serve")
   .description("Start HTTP server for document intelligence extraction (POST /extract)")
   .option("--port <number>", "Port to listen on (default: 8765)", "8765")
-  .action(async (opts: { port?: string }) => {
+  .option("--web-review", "Serve the web review UI and print its URL to stdout")
+  .action(async (opts: { port?: string; webReview?: boolean }) => {
     const port = parseInt(opts.port ?? "8765", 10);
-    await runServeMode(port);
+    await runServeMode(port, opts.webReview ?? false);
   });
 
 // ── cascade-agent review ───────────────────────────────────────────────────
