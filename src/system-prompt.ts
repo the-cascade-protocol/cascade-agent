@@ -46,14 +46,15 @@ machine-readable knowledge graphs. All operations run locally with zero network 
 ### Supported Data Types
 Clinical: Medication, Condition, Allergy, LabResult, VitalSign, Immunization, Coverage,
   PatientProfile, Encounter, MedicationAdministration, ImplantedDevice, ImagingStudy,
-  ClaimRecord, BenefitStatement
+  ClaimRecord, BenefitStatement, ClinicalSocialHistory
 Wellness: HeartRate, BloodPressure, Activity, Sleep, Supplements, SocialHistory
 Conflict Resolution: UserResolution, PendingConflict
+AI Extraction: AIExtractionActivity, AIDiscardedExtraction, SocialHistoryConsent
 
 ### Vocabulary Namespaces
-  core:     https://ns.cascadeprotocol.org/core/v1#     (v2.9 — identity, provenance, Pod structure, conflict resolution)
+  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.0 — identity, provenance, Pod structure, conflict resolution, AI extraction)
   health:   https://ns.cascadeprotocol.org/health/v1#   (v2.4 — wellness metrics, device data, social history)
-  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.7 — EHR/clinical records)
+  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.8 — EHR/clinical records, clinical social history)
   coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.3 — insurance, claims)
   pots:     https://ns.cascadeprotocol.org/pots/v1#     (v1.4 — POTS screening)
   checkup:  https://ns.cascadeprotocol.org/checkup/v1#  (v3.2 — patient-facing summaries)
@@ -123,7 +124,24 @@ Tool selection rule:
       cascade:userNote.
       cascade pod query <pod> --conflicts --json | jq '.dataTypes["conflicts"].records[]
         | {id: .properties["cascade:conflictId"], resolution: .properties["cascade:resolution"],
-           note: .properties["cascade:userNote"]}'`;
+           note: .properties["cascade:userNote"]}'
+  • Core v3.0: cascade:AIExtractionActivity (PROV-O activity for AI/NLP extraction runs),
+      cascade:AIDiscardedExtraction (discarded extraction candidates kept for audit),
+      cascade:SocialHistoryConsent (42 CFR Part 2 consent records).
+      Key properties: cascade:extractionConfidence (decimal 0.0-1.0),
+        cascade:extractionModel (model identifier), cascade:sourceNarrativeSection,
+        cascade:requiresUserReview (boolean), cascade:discardReason, cascade:consentScope.
+      Records link via prov:wasGeneratedBy to the extraction activity that produced them.
+  • Clinical v1.8: clinical:SocialHistoryRecord (EHR-extracted social history, 42 CFR Part 2).
+      Distinct from health:SocialHistoryRecord (consumer-reported).
+      Key properties: clinical:socialHistoryCategory (smokingStatus | alcoholUse | substanceUse |
+        occupation | educationLevel | sexualOrientation | genderIdentity | householdIncome |
+        housingStatus | socialIsolation), clinical:packsPerYear, clinical:substanceType,
+        clinical:frequencyDescription, clinical:socialHistoryConsent (URI → SocialHistoryConsent).
+      cascade pod query <pod> --clinical-social-history --json | jq '.dataTypes["clinical-social-history"].records[]
+        | {category: .properties["clinical:socialHistoryCategory"],
+           smoking: .properties["health:smokingStatus"],
+           packs: .properties["clinical:packsPerYear"]}'`;
 
 let _capabilities: string | undefined;
 

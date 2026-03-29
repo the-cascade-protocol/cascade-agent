@@ -2,9 +2,9 @@
 # Compare against spec/VOCAB_VERSIONS to detect drift.
 # Run scripts/check-downstream-versions.sh from spec/ to check all repos at once.
 # Update this file when the system prompt or agent capabilities reflect new vocabulary.
-core=2.9
+core=3.0
 health=2.4
-clinical=1.7
+clinical=1.8
 coverage=1.3
 checkup=3.2
 pots=1.4
