@@ -50,6 +50,7 @@ import { needsOnboarding, runOnboarding } from "./onboarding.js";
 import { validateKeyDetailed } from "./auth.js";
 import { createSessionLogger, listLogs, LOG_DIR } from "./logger.js";
 import { runServeMode } from "./commands/serve.js";
+import { runReviewMode } from "./commands/review.js";
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -397,6 +398,17 @@ program
   .action(async (opts: { port?: string }) => {
     const port = parseInt(opts.port ?? "8765", 10);
     await runServeMode(port);
+  });
+
+// ── cascade-agent review ───────────────────────────────────────────────────
+
+program
+  .command("review")
+  .description("Interactive terminal review of AI extraction queue (confidence 0.50–0.84)")
+  .option("--pod <path>", "Path to the Cascade pod directory (default: ./pod)")
+  .option("--output <path>", "Path to write review results JSON (default: <pod>/analysis/review-results.json)")
+  .action(async (opts: { pod?: string; output?: string }) => {
+    await runReviewMode(opts);
   });
 
 program.parse();

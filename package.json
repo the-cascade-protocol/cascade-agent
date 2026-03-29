@@ -28,7 +28,7 @@
     "build": "tsc && node scripts/copy-assets.mjs",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
-    "test": "npx tsx src/tests/document-intelligence.test.ts && npx tsx src/tests/extraction-pipeline.test.ts && npx tsx src/tests/serve.test.ts",
+    "test": "npx tsx src/tests/document-intelligence.test.ts && npx tsx src/tests/extraction-pipeline.test.ts && npx tsx src/tests/serve.test.ts && npx tsx src/tests/review.test.ts",
     "prepublishOnly": "npm run build"
   },
   "engines": {
