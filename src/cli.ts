@@ -39,6 +39,7 @@ import {
 } from "./config.js";
 import {
   createProvider,
+  downloadDefaultModel,
   DEFAULT_MODELS,
   ALL_PROVIDERS,
   type ProviderName,
@@ -48,6 +49,7 @@ import { runAgent } from "./agent.js";
 import { needsOnboarding, runOnboarding } from "./onboarding.js";
 import { validateKeyDetailed } from "./auth.js";
 import { createSessionLogger, listLogs, LOG_DIR } from "./logger.js";
+import { runServeMode } from "./commands/serve.js";
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
@@ -56,10 +58,10 @@ function ask(rl: readline.Interface, question: string): Promise<string> {
 }
 
 function requireApiKey(provider: ProviderName): void {
-  if (provider === "ollama") return; // no key needed
+  if (provider === "ollama" || provider === "local") return; // no key needed
   const key = getApiKey(provider);
   if (!key) {
-    const envVar = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GOOGLE_AI_API_KEY", ollama: "" }[provider];
+    const envVar = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GOOGLE_AI_API_KEY", ollama: "", local: "" }[provider];
     console.error(
       chalk.red(`No API key for ${provider}.`) +
       `\nRun ${chalk.cyan("cascade-agent login")} or set ${chalk.cyan(envVar)}.`
@@ -82,7 +84,7 @@ program
 program
   .command("login")
   .description("Add or update credentials for a provider")
-  .option("-p, --provider <name>", "Provider to configure (anthropic|openai|google|ollama)")
+  .option("-p, --provider <name>", "Provider to configure (anthropic|openai|google|ollama|local)")
   .action(async (opts: { provider?: string }) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
@@ -95,7 +97,7 @@ program
         console.log(`  ${chalk.white(i + 1 + ".")} ${PROVIDER_LABELS[p]}`)
       );
       console.log();
-      const choice = await ask(rl, "Provider [1-4]: ");
+      const choice = await ask(rl, `Provider [1-${ALL_PROVIDERS.length}]: `);
       const idx = parseInt(choice.trim(), 10) - 1;
       providerName = ALL_PROVIDERS[idx];
       if (!providerName) {
@@ -113,6 +115,33 @@ program
       const defaultUrl = config.providers.ollama?.baseUrl ?? "http://localhost:11434";
       const url = await ask(rl, `Ollama base URL [${defaultUrl}]: `);
       config.providers.ollama!.baseUrl = url.trim() || defaultUrl;
+    } else if (providerName === "local") {
+      console.log(chalk.bold("\nLocal Provider Setup — Qwen3.5-2B\n"));
+      console.log(chalk.gray("This will download the Qwen3.5-2B-Instruct-Q4_K_M model (~1.5 GB)"));
+      console.log(chalk.gray("to ~/.config/cascade-agent/models/\n"));
+      const confirm = await ask(rl, "Download model now? [Y/n]: ");
+      if (!confirm.trim() || confirm.trim().toLowerCase() === "y") {
+        let lastPercent = -1;
+        process.stdout.write(chalk.gray("Downloading "));
+        try {
+          const modelPath = await downloadDefaultModel((progress) => {
+            const pct = Math.floor(progress.percent);
+            if (pct !== lastPercent && pct % 5 === 0) {
+              process.stdout.write(chalk.gray(`${pct}%… `));
+              lastPercent = pct;
+            }
+          });
+          console.log(chalk.green("\n✓ Model downloaded"));
+          config.providers.local!.baseUrl = modelPath;
+        } catch (err) {
+          console.error(chalk.red(`\n✗ Download failed: ${(err as Error).message}`));
+          console.log(chalk.gray("\nYou can also download manually:"));
+          console.log(chalk.gray("  npx node-llama-cpp pull --repo Qwen/Qwen3.5-2B-Instruct-GGUF --file Qwen3.5-2B-Instruct-Q4_K_M.gguf"));
+          rl.close(); process.exit(1);
+        }
+      } else {
+        console.log(chalk.gray("\nSkipping download. Set the model path manually in ~/.config/cascade-agent/config.json"));
+      }
     } else {
       const keyUrls: Record<string, string> = {
         anthropic: "https://console.anthropic.com/settings/keys",
@@ -161,7 +190,7 @@ program
       const config = loadConfig();
       for (const p of ALL_PROVIDERS) {
         const pc = config.providers?.[p];
-        const hasKey = p === "ollama" || !!pc?.apiKey || !!getApiKey(p);
+        const hasKey = p === "ollama" || p === "local" || !!pc?.apiKey || !!getApiKey(p);
         const marker = p === active ? chalk.green(" ◀ active") : "";
         const status = hasKey ? chalk.green("✓") : chalk.gray("–");
         console.log(`  ${status} ${chalk.white(p.padEnd(12))} ${chalk.gray(PROVIDER_LABELS[p])}${marker}`);
@@ -357,6 +386,17 @@ program
       console.log(chalk.gray(`\n  Manual upgrade:\n    cd ${repoRoot}\n    git pull && npm run build\n`));
       process.exit(1);
     }
+  });
+
+// ── cascade-agent serve ────────────────────────────────────────────────────
+
+program
+  .command("serve")
+  .description("Start HTTP server for document intelligence extraction (POST /extract)")
+  .option("--port <number>", "Port to listen on (default: 8765)", "8765")
+  .action(async (opts: { port?: string }) => {
+    const port = parseInt(opts.port ?? "8765", 10);
+    await runServeMode(port);
   });
 
 program.parse();
