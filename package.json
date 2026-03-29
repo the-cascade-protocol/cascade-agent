@@ -25,9 +25,10 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-assets.mjs",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
+    "test": "npx tsx src/tests/document-intelligence.test.ts && npx tsx src/tests/extraction-pipeline.test.ts && npx tsx src/tests/serve.test.ts",
     "prepublishOnly": "npm run build"
   },
   "engines": {
@@ -56,11 +57,20 @@
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.55.0",
+    "@hono/node-server": "^1.19.11",
+    "better-sqlite3": "^12.8.0",
+    "bonjour-service": "^1.3.0",
     "chalk": "^5.4.1",
     "commander": "^13.1.0",
+    "hono": "^4.12.9",
+    "ollama": "^0.6.3",
     "openai": "^6.27.0"
   },
+  "optionalDependencies": {
+    "node-llama-cpp": "^3.0.0"
+  },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0"
