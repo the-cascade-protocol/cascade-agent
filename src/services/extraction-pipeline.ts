@@ -1,4 +1,5 @@
 import { documentIntelligence, ExtractedEntity, ExtractionResult, CDASection } from './document-intelligence.js';
+import { terminologyNormalizer } from './terminology-normalizer.js';
 import { writeFile } from 'fs/promises';
 import { join, dirname } from 'path';
 
@@ -30,6 +31,9 @@ export async function runExtractionPipeline(
 
     const section = block.section as CDASection;
     const result = await documentIntelligence.extractFromNarrative(block.narrativeText, section);
+
+    // Stage 2: Terminology normalization — map lab names to LOINC, conditions to ICD-10
+    result.entities = terminologyNormalizer.normalizeEntities(result.entities);
 
     const autoAccepted: ExtractedEntity[] = [];
     const needsReview: ExtractedEntity[] = [];
