@@ -77,8 +77,12 @@ const program = new Command();
 
 program
   .name("cascade-agent")
-  .description("Natural language interface for the Cascade Protocol CLI")
-  .version(readPackageVersion());
+  .description(
+    "Natural language interface for the Cascade Protocol CLI\n" +
+    "  Package: @the-cascade-protocol/agent\n" +
+    "  Install: npm install -g @the-cascade-protocol/agent"
+  )
+  .version(`@the-cascade-protocol/agent v${readPackageVersion()}`);
 
 // ── cascade-agent login ────────────────────────────────────────────────────
 

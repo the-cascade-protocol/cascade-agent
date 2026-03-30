@@ -85,6 +85,7 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
       `\n${chalk.bold.cyan("Cascade Agent")}` +
       chalk.gray(` (${provider.providerName} / ${provider.model})`)
     );
+    console.log(chalk.gray("  @the-cascade-protocol/agent — cascadeprotocol.org"));
     console.log(
       chalk.gray("Type your request, or ") +
       chalk.cyan("/help") +
