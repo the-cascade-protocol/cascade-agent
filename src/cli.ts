@@ -71,6 +71,25 @@ function requireApiKey(provider: ProviderName): void {
   }
 }
 
+// ── Deprecation shim — cascade-agent binary ────────────────────────────────
+// The canonical interface is now `cascade agent` (a subcommand of cascade-cli).
+// This binary will be removed in v2.0.0.
+
+{
+  const argv1 = process.argv[1] ?? "";
+  const isBareAgentBinary = argv1.endsWith("cascade-agent") || argv1.endsWith("cascade-agent.js");
+  if (isBareAgentBinary) {
+    console.warn(
+      chalk.yellow("⚠  cascade-agent is deprecated.") +
+      chalk.gray(
+        " Use `cascade agent` instead (part of @the-cascade-protocol/cli).\n" +
+        "   This binary will be removed in v2.0.0.\n" +
+        "   Upgrade: npm install -g @the-cascade-protocol/cli\n"
+      )
+    );
+  }
+}
+
 // ── program ────────────────────────────────────────────────────────────────
 
 const program = new Command();

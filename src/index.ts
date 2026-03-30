@@ -26,3 +26,6 @@ export type { Provider, ProviderName } from "./providers/types.js";
 // Tool definitions and executor (consumers can extend or replace)
 export { tools, executeTool } from "./tools.js";
 export type { CanonicalTool, ToolInput } from "./tools.js";
+
+// Commander integration — mount `cascade agent` as a subcommand tree
+export { registerAgentCommand } from "./commands/agent-command.js";
