@@ -6,7 +6,7 @@ import type { ProviderName } from "./providers/index.js";
 export interface ProviderConfig {
   apiKey?: string;
   model?: string;
-  baseUrl?: string; // ollama only
+  baseUrl?: string;   // ollama: custom base URL; local: absolute path to .gguf file
 }
 
 export interface Config {
@@ -37,8 +37,10 @@ export function saveConfig(config: Config): void {
 }
 
 /** Returns the API key for the given provider, checking env vars first.
- *  Google: accepts GEMINI_API_KEY (AI Studio default) or GOOGLE_AI_API_KEY. */
+ *  Google: accepts GEMINI_API_KEY (AI Studio default) or GOOGLE_AI_API_KEY.
+ *  Local: no API key needed — returns empty string. */
 export function getApiKey(provider: ProviderName = "anthropic"): string | undefined {
+  if (provider === "local") return "";
   if (provider === "google") {
     const envKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY;
     if (envKey) return envKey;
@@ -48,6 +50,7 @@ export function getApiKey(provider: ProviderName = "anthropic"): string | undefi
       openai: "OPENAI_API_KEY",
       google: "", // handled above
       ollama: "",
+      local: "",
     };
     const envKey = process.env[envMap[provider]];
     if (envKey) return envKey;
@@ -85,6 +88,8 @@ export const MODEL_ALIASES: Record<string, string> = {
   "flash25": "gemini-2.5-flash",
   "flash20": "gemini-2.0-flash",
   "pro25": "gemini-2.5-pro",
+  // Local shortcuts
+  "qwen": "hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf",
   // Ollama shortcuts are just model names — pass through as-is
 };
 
@@ -98,4 +103,5 @@ export const PROVIDER_LABELS: Record<ProviderName, string> = {
   openai: "OpenAI (GPT)",
   google: "Google (Gemini) — free tier available",
   ollama: "Ollama (local, no API key needed)",
+  local: "Local (Qwen3.5-2B, runs on-device, no API key needed)",
 };

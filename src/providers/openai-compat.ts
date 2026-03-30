@@ -166,16 +166,53 @@ export class OpenAICompatProvider implements Provider {
 
         if (delta.tool_calls) {
           for (const tc of delta.tool_calls) {
+            // Skip Google's extended-thinking entries: they appear as tool_calls
+            // deltas that have only extra_content (thought_signature) but no
+            // index or function field. Processing them pollutes `pending` with
+            // a phantom entry at pending[undefined] and masks the real response.
+            if (tc.index === undefined || !tc.function) continue;
             const i = tc.index;
             if (!pending[i]) pending[i] = { id: "", name: "", arguments: "" };
             if (tc.id) pending[i].id = tc.id;
-            if (tc.function?.name) pending[i].name += tc.function.name;
-            if (tc.function?.arguments) pending[i].arguments += tc.function.arguments;
+            if (tc.function.name) pending[i].name += tc.function.name;
+            if (tc.function.arguments) pending[i].arguments += tc.function.arguments;
           }
         }
       }
 
       const calls = Object.values(pending);
+
+      // Gemini thinking-model fallback: when the model sends only thinking tokens
+      // (as phantom tool_calls with extra_content but no function field) and no text
+      // content, the streaming response is empty even though the model has a real
+      // answer. Fall back to non-streaming for this turn.
+      if (finishReason === "stop" && textChunk === "" && calls.length === 0) {
+        const fallback = await this.client.chat.completions.create({
+          model: this.model,
+          messages: history,
+          tools: openAITools,
+          tool_choice: "auto",
+          stream: false,
+        });
+        const msg = fallback.choices[0]?.message;
+        if (msg?.content) {
+          callbacks.onText(msg.content);
+          finalText += msg.content;
+        }
+        // If the fallback produced real tool calls (with an actual function field),
+        // add them to calls so the tool-execution path below handles them.
+        if (fallback.choices[0]?.finish_reason === "tool_calls" && msg?.tool_calls) {
+          for (const tc of msg.tool_calls) {
+            const typed = tc as unknown as { id: string; function?: { name: string; arguments: string } };
+            if (typed.function?.name) {
+              calls.push({ id: typed.id, name: typed.function.name, arguments: typed.function.arguments ?? "" });
+            }
+          }
+        }
+        // Whether or not there were real tool calls, break if no content was produced
+        // (the model/API is not providing a useful response for this turn).
+        if (calls.length === 0) break;
+      }
 
       if (finishReason !== "tool_calls" || calls.length === 0) break;
 

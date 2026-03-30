@@ -57,7 +57,7 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
   let messages: SimpleMessage[] = [];
 
   // Bootstrap CLI capabilities into the system prompt.
-  // Silent no-op if cascade is not installed or returns an error.
+  // Shows a one-time install tip if cascade is not found.
   try {
     const caps = execSync("cascade capabilities", {
       encoding: "utf-8",
@@ -65,8 +65,19 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
     initSystemPrompt(caps);
-  } catch {
-    // cascade not found or failed — system prompt falls back to static content
+  } catch (err) {
+    const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? "";
+    const notInstalled =
+      stderr.includes("not found") ||
+      stderr.includes("No such file") ||
+      stderr.includes("command not found") ||
+      stderr.includes("ENOENT");
+    if (notInstalled) {
+      console.log(
+        chalk.gray("  Tip: install the Cascade CLI for full functionality:\n") +
+        chalk.cyan("    npm install -g @the-cascade-protocol/cli\n")
+      );
+    }
   }
 
   function printHeader(): void {
@@ -185,11 +196,11 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
           }
 
           case "/provider": {
-            const ALL_PROVIDERS: ProviderName[] = ["anthropic", "openai", "google", "ollama"];
+            const { ALL_PROVIDERS: PROVIDERS } = await import("./providers/index.js");
             if (!arg) {
               // Show all providers
               console.log();
-              for (const p of ALL_PROVIDERS) {
+              for (const p of PROVIDERS) {
                 const active = p === provider.providerName;
                 const marker = active ? chalk.green(" ◀ active") : "";
                 const label = active ? chalk.cyan(p) : chalk.white(p);
@@ -198,9 +209,9 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
               console.log();
               console.log(chalk.gray("  /provider <name>  — switch provider (session only)\n"));
             } else {
-              if (!ALL_PROVIDERS.includes(arg as ProviderName)) {
+              if (!PROVIDERS.includes(arg as ProviderName)) {
                 console.log(chalk.red(`  Unknown provider: ${arg}`));
-                console.log(chalk.gray(`  Choose from: ${ALL_PROVIDERS.join(", ")}\n`));
+                console.log(chalk.gray(`  Choose from: ${PROVIDERS.join(", ")}\n`));
               } else {
                 const config = loadConfig();
                 provider = createProvider(config, arg as ProviderName);
@@ -246,6 +257,18 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
       messages = [...messages, { role: "user" as const, content: input }];
       let textStarted = false;
       let lastToolName = "";
+
+      // Show a loading indicator the first time the local model is used in a
+      // session — model initialisation can take a few seconds before the first
+      // token is emitted and the screen would otherwise appear frozen.
+      let localLoadingShown = false;
+      if (provider.providerName === "local") {
+        const { isLocalModelLoaded } = await import("./providers/local.js");
+        if (!isLocalModelLoaded()) {
+          process.stdout.write(chalk.gray("  Loading model…\n"));
+          localLoadingShown = true;
+        }
+      }
 
       try {
         messages = await runAgent(provider, messages, [], {

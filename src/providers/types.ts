@@ -1,6 +1,6 @@
 import type { CanonicalTool, ToolInput } from "../tools.js";
 
-export type ProviderName = "anthropic" | "openai" | "google" | "ollama";
+export type ProviderName = "anthropic" | "openai" | "google" | "ollama" | "local";
 
 export interface SimpleMessage {
   role: "user" | "assistant";

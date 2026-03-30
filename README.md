@@ -56,7 +56,7 @@ Cascade Agent specifically wraps the [Cascade CLI](https://cascadeprotocol.org/d
   ```bash
   npm install -g @the-cascade-protocol/cli
   ```
-- An API key from at least one supported AI provider (see [Providers](#providers))
+- An API key from at least one supported AI provider — **or use the built-in local model** (see [Providers](#providers))
 
 ---
 
@@ -136,16 +136,65 @@ cascade-agent -p openai -m gpt-4o "how many lab results in this record?"
 
 ## Providers
 
-Cascade Agent supports four AI providers. Use whichever you have access to — including free options.
+Cascade Agent supports five providers. Use whichever you have access to — including two completely free, no-account-required options.
 
 | Provider | Command | Free tier? | Default model |
 |----------|---------|------------|---------------|
 | **Anthropic** (Claude) | `-p anthropic` | No — [console.anthropic.com](https://console.anthropic.com/settings/keys) | `claude-opus-4-6` |
 | **OpenAI** (GPT) | `-p openai` | No — [platform.openai.com](https://platform.openai.com/api-keys) | `gpt-4o` |
 | **Google** (Gemini) | `-p google` | **Yes** — [aistudio.google.com](https://aistudio.google.com/app/apikey) | `gemini-2.0-flash` |
-| **Ollama** (local) | `-p ollama` | **Yes** — runs on your machine | `llama3.2` |
+| **Ollama** | `-p ollama` | **Yes** — runs via Ollama | `llama3.2` |
+| **Local** (Qwen3.5-2B) | `-p local` | **Yes** — fully on-device, no account | `Qwen3.5-2B-Q4_K_M` |
 
 > **Note:** AI provider subscriptions (Claude.ai, ChatGPT Plus, Gemini Advanced) are separate from API access and cannot be used directly with this tool. You need an API key from the developer console of each provider. Google AI Studio offers a free API key with generous rate limits.
+
+### Local provider (no API key, fully on-device)
+
+The `local` provider runs [Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-2B) (Q4_K_M quantisation) entirely on your machine via [node-llama-cpp](https://node-llama-cpp.nnow.dev). No account, no network calls, no cost. **Ollama is not required.**
+
+**Setup:**
+```bash
+# Install the native inference library (Apple Silicon / Intel / Windows / Linux)
+npm install node-llama-cpp
+
+# Download the model (~1.5 GB — one-time, cached at ~/.config/cascade-agent/models/)
+cascade-agent login --provider local
+
+# Use it
+cascade-agent -p local
+```
+
+**Platform support:**
+
+| Platform | Backend | Notes |
+|----------|---------|-------|
+| Apple Silicon (M1/M2/M3/M4) | Metal GPU | Fastest — recommended |
+| Apple Intel | CPU | Slower but functional |
+| Linux CUDA | NVIDIA GPU | If CUDA toolkit present |
+| Linux/Windows CPU | CPU | Universal fallback |
+
+**Model:** `Qwen3.5-2B-Q4_K_M` sourced from [unsloth/Qwen3.5-2B-GGUF](https://huggingface.co/unsloth/Qwen3.5-2B-GGUF) on Hugging Face. 2 billion parameter instruction-tuned model with native tool-call support. Achieves 98% score (10/10 cases) on the [Cascade Agent eval suite](eval/).
+
+**Limitations vs cloud models:**
+- Slower (6–15s per response on Apple Silicon, vs <2s for cloud)
+- Less capable on complex multi-step reasoning
+- Requires `node-llama-cpp` as an optional npm dependency
+
+### Document intelligence (EHR extraction)
+
+`cascade-agent serve` includes a clinical narrative extraction service powered by the same Qwen3.5-2B model. When you run `cascade-agent serve` for the first time without the model downloaded, it will prompt you to download it automatically:
+
+```
+  No extraction model found.
+  Clinical narrative extraction requires Qwen3.5-2B (~1.5 GB).
+  This is a one-time download — the same model powers the conversational agent.
+
+  Download model now? [Y/n]:
+```
+
+**The model is shared** — if you already set up the `local` provider via `cascade-agent login`, `cascade-agent serve` will find the model and skip the download prompt.
+
+> **Note:** Ollama is not used for extraction. The service runs node-llama-cpp in-process, which supports Qwen3.5 models directly. Qwen3.5 is not yet available in Ollama.
 
 ### Configure a provider
 
@@ -181,6 +230,7 @@ cascade-agent model --provider openai o3
 | `o3` | `o3` |
 | `flash` | `gemini-2.0-flash` |
 | `pro` | `gemini-1.5-pro` |
+| `qwen` | `hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf` (local) |
 
 Any full model ID is also accepted (e.g. `cascade-agent model gemini-1.5-flash-8b`).
 
@@ -219,10 +269,13 @@ Settings are stored at `~/.config/cascade-agent/config.json`:
     "anthropic": { "apiKey": "sk-ant-...", "model": "claude-sonnet-4-6" },
     "openai":    { "apiKey": "sk-...",     "model": "gpt-4o" },
     "google":    { "apiKey": "AI...",      "model": "gemini-2.0-flash" },
-    "ollama":    { "baseUrl": "http://localhost:11434", "model": "llama3.2" }
+    "ollama":    { "baseUrl": "http://localhost:11434", "model": "llama3.2" },
+    "local":     { "baseUrl": "/Users/you/.config/cascade-agent/models/hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf" }
   }
 }
 ```
+
+> For the `local` provider, `baseUrl` holds the path to the `.gguf` model file. Run `cascade-agent login --provider local` to download the model and set this automatically.
 
 Environment variables take precedence over stored keys:
 
@@ -238,18 +291,62 @@ Environment variables take precedence over stored keys:
 
 ```
 src/
-├── cli.ts                  Entry point — commands: login, provider, model, REPL/one-shot
+├── cli.ts                  Entry point — commands: login, provider, model, serve, review, REPL/one-shot
 ├── config.ts               Config file read/write, model aliases
 ├── agent.ts                Thin orchestration layer
 ├── repl.ts                 Interactive readline REPL
 ├── tools.ts                Tool definitions (shell, read_file) + execution
-├── system-prompt.ts        Shared system prompt for all providers
-└── providers/
-    ├── types.ts            Provider interface and shared types
-    ├── anthropic.ts        Anthropic Claude implementation
-    ├── openai-compat.ts    OpenAI / Google / Ollama implementation
-    └── index.ts            Factory function + default models
+├── system-prompt.ts        Shared system prompt for cloud providers
+├── providers/
+│   ├── types.ts            Provider interface and shared types
+│   ├── anthropic.ts        Anthropic Claude implementation
+│   ├── openai-compat.ts    OpenAI / Google / Ollama implementation
+│   ├── local.ts            Local Qwen3.5-2B via node-llama-cpp (also used by extraction)
+│   └── index.ts            Factory function + default models
+├── services/
+│   ├── document-intelligence.ts   Clinical narrative extraction via node-llama-cpp
+│   ├── extraction-pipeline.ts     Two-stage pipeline with confidence routing
+│   └── terminology-normalizer.ts  Lab → LOINC, condition → ICD-10 normalization
+└── commands/
+    ├── serve.ts            HTTP server (POST /extract, GET /review, Bonjour)
+    └── review.ts           Terminal review mode for extraction queue
+
+eval/                       Rerunnable eval suite (10 cases, any provider)
+├── runner.ts               CLI: --provider --model --filter --json
+├── harness.ts              Single-case executor
+├── reporter.ts             ANSI table + JSON output
+├── cases/                  Test case definitions
+└── fixtures/               Static test data (sample.ttl, sample.json)
 ```
+
+---
+
+## Eval suite
+
+A rerunnable benchmark is included for measuring model quality. Run it against any provider:
+
+```bash
+# Google (baseline)
+npx tsx eval/runner.ts --provider google --json
+
+# Local Qwen3.5-2B
+npx tsx eval/runner.ts --provider local --json
+
+# Specific cases only
+npx tsx eval/runner.ts --provider local --filter shell-single,pod-query
+
+# List all cases
+npx tsx eval/runner.ts --list
+```
+
+**Results (as of March 2026):**
+
+| Provider | Model | Pass | Score | Notes |
+|----------|-------|------|-------|-------|
+| Local | Qwen3.5-2B-Q4_K_M | 10/10 | 98% | Subprocess isolation, 6–15s/case |
+| Google | gemini-flash-lite-latest | 8/10 | 80% | Fails pod-query (path not found), nlu-cli-help |
+
+The 10 eval cases cover: single tool calls, multi-step chains, file reading, mixed tools, pod query, error recovery, and four NLU knowledge questions.
 
 ---
 

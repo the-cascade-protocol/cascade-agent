@@ -1,10 +1,12 @@
 import type { Provider, ProviderName } from "./types.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
+import { LocalProvider, MODELS_DIR, DEFAULT_LOCAL_MODEL_FILENAME } from "./local.js";
+import { join } from "path";
 import type { Config } from "../config.js";
 
 /** All supported provider names, in display order. */
-export const ALL_PROVIDERS: ProviderName[] = ["anthropic", "openai", "google", "ollama"];
+export const ALL_PROVIDERS: ProviderName[] = ["anthropic", "openai", "google", "ollama", "local"];
 
 /** Default models per provider. */
 export const DEFAULT_MODELS: Record<ProviderName, string> = {
@@ -12,6 +14,7 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
   openai: "gpt-4.1",           // latest as of Aug 2025 — check platform.openai.com/docs/models
   google: "gemini-flash-latest",  // free tier available via AI Studio — tracks latest flash automatically
   ollama: "llama3.2",
+  local: DEFAULT_LOCAL_MODEL_FILENAME,
 };
 
 /** Cheapest/most-stable models used only for API key validation. */
@@ -20,6 +23,7 @@ export const VALIDATION_MODELS: Record<ProviderName, string> = {
   openai: "gpt-4o-mini",
   google: "gemini-flash-latest",
   ollama: "",
+  local: "",
 };
 
 /** Base URLs for OpenAI-compatible backends that aren't api.openai.com. */
@@ -68,7 +72,15 @@ export function createProvider(
       const baseURL = pc.baseUrl ?? BASE_URLS.ollama!;
       return new OpenAICompatProvider("ollama", "ollama", model, baseURL);
     }
+
+    case "local": {
+      // modelPath: stored in config as baseUrl field (repurposed for local),
+      // or constructed from MODELS_DIR + model filename.
+      const modelPath = pc.baseUrl ?? join(MODELS_DIR, model);
+      return new LocalProvider(modelPath, model);
+    }
   }
 }
 
+export { downloadDefaultModel } from "./local.js";
 export type { Provider, ProviderName };

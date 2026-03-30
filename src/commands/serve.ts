@@ -4,6 +4,8 @@ import { randomBytes } from 'crypto';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
+import readline from 'readline';
+import chalk from 'chalk';
 import { documentIntelligence, CDASection } from '../services/document-intelligence.js';
 import type { ExtractionResult } from '../services/document-intelligence.js';
 import type { ReviewQueueItem, ReviewDecision, ReviewResultItem } from './review.js';
@@ -616,6 +618,39 @@ loadQueue();
 export async function runServeMode(port: number = DEFAULT_PORT, webReview = false): Promise<void> {
   await documentIntelligence.initialize();
 
+  // If the extraction model is not present, prompt the user to download it
+  if (!documentIntelligence.isAvailable) {
+    console.log('');
+    console.log(chalk.yellow('  No extraction model found.'));
+    console.log(chalk.gray('  Clinical narrative extraction requires Qwen3.5-2B (~1.5 GB).'));
+    console.log(chalk.gray('  This is a one-time download — the same model powers the conversational agent.'));
+    console.log('');
+
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise<string>((resolve) =>
+      rl.question(chalk.green('  Download model now? [Y/n]: '), resolve)
+    );
+    rl.close();
+
+    if (!answer.trim() || answer.trim().toLowerCase() === 'y') {
+      let lastPct = -1;
+      process.stdout.write(chalk.gray('\n  Downloading '));
+      await documentIntelligence.ensureModel(({ percent }) => {
+        const pct = Math.floor(percent);
+        if (pct !== lastPct && pct % 5 === 0) {
+          process.stdout.write(chalk.gray(`${pct}%… `));
+          lastPct = pct;
+        }
+      });
+      console.log(chalk.green('\n  ✓ Model ready'));
+      console.log('');
+    } else {
+      console.log(chalk.gray('\n  Skipping download. Extraction endpoints will return 503 until a model is available.'));
+      console.log(chalk.gray('  Run `cascade-agent login --provider local` to download later.'));
+      console.log('');
+    }
+  }
+
   // Generate session token
   const sessionToken = randomBytes(32).toString('hex');
   const configDir = join(homedir(), '.config', 'cascade-agent');
@@ -639,7 +674,7 @@ export async function runServeMode(port: number = DEFAULT_PORT, webReview = fals
       return c.json({ error: 'section and narrativeText are required' }, 400);
     }
     if (!documentIntelligence.isAvailable) {
-      return c.json({ error: 'No model available. Run: ollama pull qwen3.5:4b-instruct-q4_K_M' }, 503);
+      return c.json({ error: 'No extraction model loaded. Restart cascade-agent serve to download.' }, 503);
     }
     try {
       const result = await documentIntelligence.extractFromNarrative(
@@ -659,8 +694,12 @@ export async function runServeMode(port: number = DEFAULT_PORT, webReview = fals
     available: documentIntelligence.isAvailable,
     currentModel: documentIntelligence.currentModelId,
     recommendedModels: [
-      { id: 'qwen3.5:4b-instruct-q4_K_M', displayName: 'Qwen 3.5 4B (Recommended)', sizeGB: 2.7 },
-      { id: 'qwen3.5:2b-instruct-q4_K_M', displayName: 'Qwen 3.5 2B (Compatible)', sizeGB: 1.5 },
+      {
+        id: 'hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf',
+        displayName: 'Qwen3.5-2B Q4_K_M (default, ~1.5 GB)',
+        source: 'unsloth/Qwen3.5-2B-GGUF on Hugging Face',
+        runtime: 'node-llama-cpp (in-process, no Ollama required)',
+      },
     ],
   }));
 

@@ -7,3 +7,4 @@ desktop/
 patient.json
 patient.jsonld
 patient_for_write.json
+eval/ccda-extraction-private.ts

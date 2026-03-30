@@ -3,6 +3,7 @@ import chalk from "chalk";
 import { loadConfig, saveConfig, getApiKey } from "./config.js";
 import {
   createProvider,
+  downloadDefaultModel,
   DEFAULT_MODELS,
   ALL_PROVIDERS,
   type ProviderName,
@@ -24,10 +25,12 @@ export function needsOnboarding(): boolean {
   }
   const config = loadConfig();
   const anyKey = ALL_PROVIDERS.some((p) => {
-    if (p === "ollama") return false;
+    if (p === "ollama" || p === "local") return false;
     return !!config.providers?.[p]?.apiKey;
   });
-  return !anyKey;
+  // Also not needed if local model is configured
+  const localConfigured = !!config.providers?.local?.baseUrl;
+  return !anyKey && !localConfigured;
 }
 
 // ── visual helpers ─────────────────────────────────────────────────────────
@@ -135,6 +138,13 @@ export async function runOnboarding(): Promise<Provider> {
       note: "local — no API key needed",
       url: "ollama.com",
     },
+    {
+      name: "local",
+      label: "Local (Qwen3.5-2B)",
+      free: true,
+      note: "on-device, no API key, ~1.5 GB download",
+      url: "cascadeprotocol.org",
+    },
   ];
 
   for (let i = 0; i < providers.length; i++) {
@@ -148,13 +158,13 @@ export async function runOnboarding(): Promise<Provider> {
   }
 
   let providerIndex = -1;
-  while (providerIndex < 0 || providerIndex > 3) {
-    const raw = await ask(rl, chalk.green("  Choose a provider [1-4]: "));
+  while (providerIndex < 0 || providerIndex >= providers.length) {
+    const raw = await ask(rl, chalk.green(`  Choose a provider [1-${providers.length}]: `));
     const n = parseInt(raw.trim(), 10);
-    if (n >= 1 && n <= 4) {
+    if (n >= 1 && n <= providers.length) {
       providerIndex = n - 1;
     } else {
-      console.log(chalk.red("  Please enter a number between 1 and 4."));
+      console.log(chalk.red(`  Please enter a number between 1 and ${providers.length}.`));
     }
   }
 
@@ -165,7 +175,11 @@ export async function runOnboarding(): Promise<Provider> {
 
   // ── Step 2: API key (or Ollama URL) ──────────────────────────────────────
 
-  step(2, chosen.name === "ollama" ? "Configure Ollama" : "Enter your API key");
+  const stepLabel =
+    chosen.name === "ollama" ? "Configure Ollama" :
+    chosen.name === "local"  ? "Download local model" :
+    "Enter your API key";
+  step(2, stepLabel);
 
   if (chosen.name === "ollama") {
     const defaultUrl = config.providers.ollama?.baseUrl ?? "http://localhost:11434";
@@ -177,6 +191,30 @@ export async function runOnboarding(): Promise<Provider> {
     blank();
     const raw = await ask(rl, chalk.green(`  Base URL [${defaultUrl}]: `));
     config.providers.ollama!.baseUrl = raw.trim() || defaultUrl;
+  } else if (chosen.name === "local") {
+    blank();
+    console.log(chalk.white("  Qwen3.5-2B runs entirely on your device — no API key or internet needed after setup."));
+    console.log(chalk.gray("  The model file is ~1.5 GB and will be saved to ~/.config/cascade-agent/models/"));
+    blank();
+    const confirm = await ask(rl, chalk.green("  Download model now? [Y/n]: "));
+    if (!confirm.trim() || confirm.trim().toLowerCase() === "y") {
+      let lastPercent = -1;
+      process.stdout.write(chalk.gray("\n  Downloading "));
+      try {
+        const modelPath = await downloadDefaultModel((progress) => {
+          const pct = Math.floor(progress.percent);
+          if (pct !== lastPercent && pct % 5 === 0) {
+            process.stdout.write(chalk.gray(`${pct}%… `));
+            lastPercent = pct;
+          }
+        });
+        console.log(chalk.green("\n  ✓ Model downloaded"));
+        config.providers.local!.baseUrl = modelPath;
+      } catch (err) {
+        console.error(chalk.red(`\n  ✗ Download failed: ${(err as Error).message}`));
+        rl.close(); process.exit(1);
+      }
+    }
   } else {
     blank();
     console.log(
@@ -219,66 +257,68 @@ export async function runOnboarding(): Promise<Provider> {
 
   // ── Step 3: Pick a model ──────────────────────────────────────────────────
 
-  step(3, "Choose a model");
-  blank();
-
   const defaultModel = DEFAULT_MODELS[chosen.name];
   let chosenModel = defaultModel;
 
-  // Temporarily save key so createProvider can use it
-  config.activeProvider = chosen.name;
-  const tempProvider = createProvider(config, chosen.name);
-
-  process.stdout.write(chalk.gray("  Fetching available models…  "));
-  let models: string[] = [];
-  try {
-    models = await tempProvider.listModels();
-    console.log(chalk.gray(`${models.length} found\n`));
-  } catch {
-    console.log(chalk.gray("(offline — will use default)\n"));
-  }
-
-  if (models.length > 0) {
-    // Show numbered list with default highlighted
-    const defaultIdx = models.indexOf(defaultModel);
-    for (let i = 0; i < models.length; i++) {
-      const isDefault = models[i] === defaultModel;
-      const num = chalk.gray(`  ${String(i + 1).padStart(2)}.`);
-      const id = isDefault ? chalk.cyan(models[i]) : chalk.white(models[i]);
-      const tag = isDefault ? chalk.gray("  (recommended)") : "";
-      console.log(`${num} ${id}${tag}`);
-    }
-    blank();
-
-    const defaultNum = defaultIdx >= 0 ? defaultIdx + 1 : 1;
-    while (true) {
-      const raw = await ask(
-        rl,
-        chalk.green(`  Choose a model [1-${models.length}] or press Enter for recommended: `)
-      );
-      const trimmed = raw.trim();
-      if (!trimmed) {
-        chosenModel = defaultModel;
-        break;
-      }
-      const n = parseInt(trimmed, 10);
-      if (n >= 1 && n <= models.length) {
-        chosenModel = models[n - 1];
-        break;
-      }
-      // Allow typing a model ID directly
-      if (models.includes(trimmed)) {
-        chosenModel = trimmed;
-        break;
-      }
-      console.log(chalk.red(`  Enter a number between 1 and ${models.length}, or press Enter.`));
-    }
+  // Local provider: model was already chosen/downloaded — no selection needed.
+  if (chosen.name === "local") {
+    chosenModel = defaultModel;
   } else {
-    // Fallback: free-text with default
-    console.log(chalk.gray("  Could not fetch model list. Type a model ID or press Enter for the default."));
+    step(3, "Choose a model");
     blank();
-    const raw = await ask(rl, chalk.green(`  Model [${defaultModel}]: `));
-    chosenModel = raw.trim() || defaultModel;
+
+    // Temporarily save key so createProvider can use it
+    config.activeProvider = chosen.name;
+    const tempProvider = createProvider(config, chosen.name);
+
+    process.stdout.write(chalk.gray("  Fetching available models…  "));
+    let models: string[] = [];
+    try {
+      models = await tempProvider.listModels();
+      console.log(chalk.gray(`${models.length} found\n`));
+    } catch {
+      console.log(chalk.gray("(offline — will use default)\n"));
+    }
+
+    if (models.length > 0) {
+      // Show numbered list with default highlighted
+      const defaultIdx = models.indexOf(defaultModel);
+      for (let i = 0; i < models.length; i++) {
+        const isDefault = models[i] === defaultModel;
+        const num = chalk.gray(`  ${String(i + 1).padStart(2)}.`);
+        const id = isDefault ? chalk.cyan(models[i]) : chalk.white(models[i]);
+        const tag = isDefault ? chalk.gray("  (recommended)") : "";
+        console.log(`${num} ${id}${tag}`);
+      }
+      blank();
+
+      while (true) {
+        const raw = await ask(
+          rl,
+          chalk.green(`  Choose a model [1-${models.length}] or press Enter for recommended: `)
+        );
+        const trimmed = raw.trim();
+        if (!trimmed) {
+          chosenModel = defaultModel;
+          break;
+        }
+        const n = parseInt(trimmed, 10);
+        if (n >= 1 && n <= models.length) {
+          chosenModel = models[n - 1];
+          break;
+        }
+        if (models.includes(trimmed)) {
+          chosenModel = trimmed;
+          break;
+        }
+        console.log(chalk.red(`  Enter a number between 1 and ${models.length}, or press Enter.`));
+      }
+    } else {
+      console.log(chalk.gray("  Could not fetch model list. Type a model ID or press Enter for the default."));
+      blank();
+      const raw = await ask(rl, chalk.green(`  Model [${defaultModel}]: `));
+      chosenModel = raw.trim() || defaultModel;
+    }
   }
 
   config.providers[chosen.name]!.model = chosenModel;
