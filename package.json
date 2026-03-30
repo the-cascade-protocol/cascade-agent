@@ -22,6 +22,8 @@
   },
   "files": [
     "dist/",
+    "resources/",
+    "NOTICES",
     "README.md"
   ],
   "scripts": {

@@ -1,0 +1,40 @@
+# Third-Party Notices — @the-cascade-protocol/agent
+
+This package includes a bundled terminology database (`resources/clinical_knowledge.sqlite`)
+containing content from the following sources:
+
+## LOINC®
+
+This product includes LOINC® content.
+
+  Copyright © 1995 Regenstrief Institute, Inc. and the LOINC Committee.
+  All rights reserved.
+
+LOINC is a registered trademark of Regenstrief Institute, Inc. This material
+contains content from LOINC (https://loinc.org). The LOINC table, LOINC codes,
+LOINC panels and forms file, LOINC answer file, and LOINC users' guide are
+copyright © 1995–2024, Regenstrief Institute, Inc. and the Logical Observation
+Identifiers Names and Codes (LOINC) Committee and is available at no cost under
+the license at https://loinc.org/license/. LOINC® is a registered United States
+trademark of Regenstrief Institute, Inc.
+
+Bundled subset: 51 common lab test name → LOINC code mappings.
+
+## ICD-10-CM
+
+This product includes ICD-10-CM codes maintained by the Centers for Medicare &
+Medicaid Services (CMS) and the National Center for Health Statistics (NCHS), CDC.
+
+ICD-10-CM codes are in the public domain as works of the United States federal
+government (17 U.S.C. § 105).
+
+Source: https://www.cms.gov/medicare/coding-billing/icd-10-codes
+
+Bundled subset: 20 common condition name → ICD-10-CM code mappings.
+
+## SNOMED CT
+
+This package does NOT include SNOMED CT content. SNOMED CT is owned by SNOMED
+International and requires a license for use and redistribution. In the United
+States, a no-cost license is available through the National Library of Medicine
+(NLM) UMLS program: https://www.nlm.nih.gov/research/umls/index.html

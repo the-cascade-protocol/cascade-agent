@@ -1,7 +1,13 @@
 import Database from 'better-sqlite3';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { existsSync } from 'fs';
+import { fileURLToPath } from 'url';
 import type { ExtractedEntity } from './document-intelligence.js';
+
+// Resolve the package-bundled database relative to this file (works in both
+// src/ during dev and dist/ after build, because resources/ sits at the repo root).
+const _dir = dirname(fileURLToPath(import.meta.url));
+const BUNDLED_DB = join(_dir, '..', '..', 'resources', 'clinical_knowledge.sqlite');
 
 interface LoincMatch {
   loincCode: string;
@@ -19,10 +25,13 @@ export class TerminologyNormalizer {
   private db: Database.Database | null = null;
 
   constructor() {
-    // Find clinical_knowledge.sqlite — prefer env var, then well-known path
+    // Find clinical_knowledge.sqlite — preference order:
+    //  1. CLINICAL_KNOWLEDGE_DB env var (override for custom/larger databases)
+    //  2. Bundled resources/clinical_knowledge.sqlite (ships with the npm package —
+    //     51 LOINC + 20 ICD-10-CM entries; no SNOMED, no RxNorm)
     const candidates = [
       process.env.CLINICAL_KNOWLEDGE_DB,
-      join(process.env.HOME ?? '~', 'Development', 'cascade-checkup', 'apple', 'CascadeCheckup', 'CascadeCheckup', 'Resources', 'clinical_knowledge.sqlite'),
+      BUNDLED_DB,
     ].filter(Boolean) as string[];
 
     for (const path of candidates) {
