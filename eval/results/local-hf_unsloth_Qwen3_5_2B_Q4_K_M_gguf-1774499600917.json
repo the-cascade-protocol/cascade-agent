@@ -1,0 +1,125 @@
+{
+  "provider": "local",
+  "model": "hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf",
+  "timestamp": "2026-03-26T04:33:20.915Z",
+  "passed": 10,
+  "total": 10,
+  "overallScore": 0.9800000000000001,
+  "cases": [
+    {
+      "name": "shell-single",
+      "description": "List files in /tmp → expects one shell tool call",
+      "pass": true,
+      "score": 1,
+      "notes": "command: ls /tmp | wc -l",
+      "latencyMs": 6047,
+      "toolCallCount": 1,
+      "toolNames": [
+        "shell"
+      ]
+    },
+    {
+      "name": "shell-chain",
+      "description": "Create dir → write file → count lines (3-step chain)",
+      "pass": true,
+      "score": 1,
+      "notes": "3 shell calls, all 3 steps completed",
+      "latencyMs": 14942,
+      "toolCallCount": 3,
+      "toolNames": [
+        "shell",
+        "shell",
+        "shell"
+      ]
+    },
+    {
+      "name": "read-file",
+      "description": "Read a .ttl fixture and answer a question about its contents",
+      "pass": true,
+      "score": 1,
+      "notes": "hypertension=true, diabetes=true",
+      "latencyMs": 7194,
+      "toolCallCount": 1,
+      "toolNames": [
+        "read_file"
+      ]
+    },
+    {
+      "name": "mixed-tools",
+      "description": "Uses shell + read_file in the same turn",
+      "pass": true,
+      "score": 1,
+      "notes": "shell=1 calls, read_file=1 calls",
+      "latencyMs": 8841,
+      "toolCallCount": 2,
+      "toolNames": [
+        "shell",
+        "read_file"
+      ]
+    },
+    {
+      "name": "pod-query",
+      "description": "Formulates a cascade pod query shell command for conditions",
+      "pass": true,
+      "score": 1,
+      "notes": "cascade=true, pod+query=true, typeFlag=true, podPath=true",
+      "latencyMs": 5889,
+      "toolCallCount": 1,
+      "toolNames": [
+        "shell"
+      ]
+    },
+    {
+      "name": "error-recovery",
+      "description": "Tool returns error — agent reports cleanly without infinite loop",
+      "pass": true,
+      "score": 1,
+      "notes": "1 shell call(s), error acknowledged cleanly",
+      "latencyMs": 4825,
+      "toolCallCount": 1,
+      "toolNames": [
+        "shell"
+      ]
+    },
+    {
+      "name": "no-tool",
+      "description": "Factual Q&A — no tool calls should be made",
+      "pass": true,
+      "score": 1,
+      "notes": "Correctly answered without tool use",
+      "latencyMs": 5408,
+      "toolCallCount": 0,
+      "toolNames": []
+    },
+    {
+      "name": "nlu-conversion",
+      "description": "NLU: how to convert FHIR to Cascade — no tool calls expected",
+      "pass": true,
+      "score": 0.8,
+      "notes": "convert=true, fhir=true, turtle=true, filename=false",
+      "latencyMs": 3955,
+      "toolCallCount": 0,
+      "toolNames": []
+    },
+    {
+      "name": "nlu-vocabulary",
+      "description": "NLU: vocabulary namespace question — no tool calls expected",
+      "pass": true,
+      "score": 1,
+      "notes": "health_ns=true, full_uri=true, testName=true, labResult=true",
+      "latencyMs": 8101,
+      "toolCallCount": 0,
+      "toolNames": []
+    },
+    {
+      "name": "nlu-cli-help",
+      "description": "NLU: what can the cascade CLI do — knowledge or shell --help both acceptable",
+      "pass": true,
+      "score": 1,
+      "notes": "4/4 main commands mentioned (pod=true, convert=true, validate=true, query=true)",
+      "latencyMs": 8562,
+      "toolCallCount": 0,
+      "toolNames": []
+    }
+  ]
+}

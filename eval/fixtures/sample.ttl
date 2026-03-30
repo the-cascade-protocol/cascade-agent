@@ -1,0 +1,40 @@
+@prefix rdf:    <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix xsd:    <http://www.w3.org/2001/XMLSchema#> .
+@prefix health: <https://ns.cascadeprotocol.org/health/v1#> .
+@prefix prov:   <http://www.w3.org/ns/prov#> .
+@prefix ex:     <https://example.cascadeprotocol.org/records/> .
+
+ex:condition-001
+    rdf:type              health:Condition ;
+    health:conditionName  "Hypertension" ;
+    health:status         "active" ;
+    health:snomedCode     "38341003" ;
+    health:snomedSemanticTag "disorder" .
+
+ex:condition-002
+    rdf:type              health:Condition ;
+    health:conditionName  "Type 2 Diabetes" ;
+    health:status         "active" ;
+    health:snomedCode     "44054006" ;
+    health:snomedSemanticTag "disorder" .
+
+ex:medication-001
+    rdf:type                 health:Medication ;
+    health:medicationName    "Lisinopril 10mg" ;
+    health:isActive          true ;
+    health:dose              "10 mg" ;
+    health:frequency         "once daily" .
+
+ex:labresult-001
+    rdf:type              health:LabResult ;
+    health:testName       "HbA1c" ;
+    health:resultValue    "7.2" ;
+    health:resultUnit     "%" ;
+    health:performedDate  "2025-11-15"^^xsd:date .
+
+ex:labresult-002
+    rdf:type              health:LabResult ;
+    health:testName       "Fasting Glucose" ;
+    health:resultValue    "118" ;
+    health:resultUnit     "mg/dL" ;
+    health:performedDate  "2025-11-15"^^xsd:date .

@@ -1,0 +1,37 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-001",
+        "name": [{ "family": "Doe", "given": ["Jane"] }],
+        "birthDate": "1975-04-12",
+        "gender": "female"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "condition-001",
+        "subject": { "reference": "Patient/patient-001" },
+        "code": {
+          "coding": [{ "system": "http://snomed.info/sct", "code": "38341003", "display": "Hypertension" }]
+        },
+        "clinicalStatus": { "coding": [{ "code": "active" }] }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationStatement",
+        "id": "med-001",
+        "subject": { "reference": "Patient/patient-001" },
+        "medicationCodeableConcept": {
+          "coding": [{ "display": "Lisinopril 10mg" }]
+        },
+        "status": "active"
+      }
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { execSync } from "child_process";
-import { readFileSync } from "fs";
+import { readFileSync, statSync } from "fs";
 
 /** JSON Schema property descriptor used in tool input_schema. */
 export interface ToolPropertySchema {
@@ -76,6 +76,23 @@ export function executeTool(name: string, input: ToolInput): string {
       let cmd = input.command;
       if (!cmd) return "Error: no command provided";
 
+      // Validate cwd — execSync throws a cryptic ENOENT when cwd doesn't exist.
+      // Warn but continue: commands that use absolute paths work fine without cwd.
+      let cwdWarning = "";
+      let effectiveCwd = input.cwd as string | undefined;
+      if (effectiveCwd) {
+        try {
+          const st = statSync(effectiveCwd);
+          if (!st.isDirectory()) {
+            cwdWarning = `Warning: cwd '${effectiveCwd}' is not a directory — running in current directory instead.\n`;
+            effectiveCwd = undefined;
+          }
+        } catch {
+          cwdWarning = `Warning: cwd '${effectiveCwd}' does not exist — running in current directory instead.\n`;
+          effectiveCwd = undefined;
+        }
+      }
+
       // When the agent runs `cascade pod query ... --json` without piping to jq,
       // auto-inject a per-type smart summary filter so the model never drowns in
       // raw JSON.  A pipe to jq (or jq -f) indicates the agent already has a
@@ -116,26 +133,32 @@ export function executeTool(name: string, input: ToolInput): string {
           prefix + "'" + filter.replace(/\\"/g, '"') + "'",
       );
 
+      // Fix a common LLM mistake: dot notation for colon-prefixed property names.
+      // e.g. .properties.health:testName → .properties["health:testName"]
+      // Colons are invalid in jq dot notation and always cause a compile error.
+      cmd = cmd.replace(
+        /\.properties\.([a-zA-Z][a-zA-Z0-9]*):([a-zA-Z][a-zA-Z0-9]*)/g,
+        '.properties["$1:$2"]',
+      );
+
       try {
         const stdout = execSync(cmd, {
-          cwd: input.cwd,
+          cwd: effectiveCwd,
           timeout: 5 * 60 * 1000,
           encoding: "utf-8",
           maxBuffer: 1024 * 1024 * 20,
           shell: process.platform === "win32" ? "cmd.exe" : "/bin/bash",
         });
-        const out = stdout.trim() || "(command succeeded with no output)";
+        const out = (stdout.trim() || "(command succeeded with no output)");
         const MAX_CHARS = 40_000;
-        if (out.length > MAX_CHARS) {
-          return (
-            out.slice(0, MAX_CHARS) +
+        const truncated = out.length > MAX_CHARS
+          ? out.slice(0, MAX_CHARS) +
             `\n\n[OUTPUT TRUNCATED — ${out.length.toLocaleString()} chars total. ` +
             `The output is too large to read directly. ` +
             `Pipe through jq to extract only the fields you need, e.g.: ` +
             `cascade pod query <pod> --TYPE --json | jq '[.dataTypes[\"TYPE\"].records[] | ...]']`
-          );
-        }
-        return out;
+          : out;
+        return cwdWarning + truncated;
       } catch (err) {
         const e = err as {
           message: string;

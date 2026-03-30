@@ -17,6 +17,7 @@
 import { homedir } from "os";
 import { join, basename } from "path";
 import { existsSync, mkdirSync } from "fs";
+import chalk from "chalk";
 import { tools as builtinTools, executeTool, type ToolInput } from "../tools.js";
 import type { CanonicalTool } from "../tools.js";
 import type { Provider, SimpleMessage, AgentCallbacks, ProviderName } from "./types.js";
@@ -25,15 +26,58 @@ import type { Provider, SimpleMessage, AgentCallbacks, ProviderName } from "./ty
 
 export const MODELS_DIR = join(homedir(), ".config", "cascade-agent", "models");
 
-/** Default model: Qwen3.5-2B Q4_K_M — best balance of size, speed, tool-call quality.
- *  Sourced from unsloth's public mirror of Qwen/Qwen3.5-2B (the instruct/chat variant).
- *  node-llama-cpp prefixes HuggingFace downloads with hf_<org>_ so the actual filename
- *  on disk is "hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf". */
-export const DEFAULT_LOCAL_MODEL_FILENAME = "hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf";
+/**
+ * Available local model variants.
+ * Eval results (2026-03-28, C-CDA extraction on Epic MyChart export):
+ *   4B Q4_K_M — 98% F1 overall (100% conditions, 95% lab results), ~2.5 GB, ~32s/turn
+ *   2B Q4_K_M — 91% F1 overall (100% conditions, 82% lab results), ~1.5 GB, ~13s/turn
+ */
+export type LocalModelVariant = "4b" | "2b";
 
-/** Hugging Face repo + file for the default model (public, no auth required) */
-export const DEFAULT_MODEL_REPO = "unsloth/Qwen3.5-2B-GGUF";
-export const DEFAULT_MODEL_FILE = "Qwen3.5-2B-Q4_K_M.gguf";
+export interface LocalModelInfo {
+  variant: LocalModelVariant;
+  displayName: string;
+  repo: string;
+  file: string;
+  /** Expected on-disk filename after node-llama-cpp downloader (adds hf_<org>_ prefix) */
+  filename: string;
+  sizeGb: string;
+  accuracy: string;
+  recommended: boolean;
+}
+
+export const LOCAL_MODELS: Record<LocalModelVariant, LocalModelInfo> = {
+  "4b": {
+    variant: "4b",
+    displayName: "Qwen3.5-4B Q4_K_M",
+    repo: "unsloth/Qwen3.5-4B-GGUF",
+    file: "Qwen3.5-4B-Q4_K_M.gguf",
+    filename: "hf_unsloth_Qwen3.5-4B-Q4_K_M.gguf",
+    sizeGb: "~2.5",
+    accuracy: "98%",
+    recommended: true,
+  },
+  "2b": {
+    variant: "2b",
+    displayName: "Qwen3.5-2B Q4_K_M",
+    repo: "unsloth/Qwen3.5-2B-GGUF",
+    file: "Qwen3.5-2B-Q4_K_M.gguf",
+    filename: "hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf",
+    sizeGb: "~1.5",
+    accuracy: "91%",
+    recommended: false,
+  },
+};
+
+/** Default model variant — 4B is recommended per eval results. */
+export const DEFAULT_LOCAL_MODEL_VARIANT: LocalModelVariant = "4b";
+
+/** Default on-disk filename (used as fallback when no config path is stored). */
+export const DEFAULT_LOCAL_MODEL_FILENAME = LOCAL_MODELS["4b"].filename;
+
+/** Kept for backwards compatibility — previously named the 2B model. */
+export const DEFAULT_MODEL_REPO = LOCAL_MODELS["4b"].repo;
+export const DEFAULT_MODEL_FILE = LOCAL_MODELS["4b"].file;
 
 // ── Module-level cache (one Llama instance + one loaded model + one session) ─
 
@@ -160,10 +204,21 @@ export class LocalProvider implements Provider {
 
     // ── Create simplified tool descriptions for small-model context ──────────
     // Shorter descriptions reduce prompt length and improve compliance.
-    const simplifiedTools = allTools.map((t) => ({
-      ...t,
-      description: simplifyDescription(t.name, t.description),
-    }));
+    // Also strip the optional `cwd` parameter from the shell tool — the 2B
+    // model reliably sets it to invalid paths (e.g. treating a zip filename
+    // as a directory). All shell commands should use absolute paths instead.
+    const simplifiedTools = allTools.map((t) => {
+      const simplified = { ...t, description: simplifyDescription(t.name, t.description) };
+      if (t.name === "shell") {
+        const { cwd: _cwd, ...restProps } = simplified.input_schema.properties;
+        simplified.input_schema = {
+          ...simplified.input_schema,
+          properties: restProps,
+          required: simplified.input_schema.required?.filter((r) => r !== "cwd"),
+        };
+      }
+      return simplified;
+    });
 
     // ── Build functions map for node-llama-cpp ───────────────────────────────
     const functions: Record<string, ReturnType<typeof defineChatSessionFunction>> = {};
@@ -221,15 +276,65 @@ export class LocalProvider implements Provider {
     // ── Prompt with the latest user message ──────────────────────────────────
     let finalText = "";
 
-    finalText = await session.prompt(lastMsg.content, {
+    const promptOptions = {
       functions,
       temperature: 0.15,   // Low temp → more reliable tool call JSON
       maxTokens: 2048,
+      // Repetition penalty prevents the degenerate "word word word" looping
+      // that small models exhibit when the context grows large.
+      repeatPenalty: {
+        penalty: 1.3,
+        frequencyPenalty: 0.1,
+        presencePenalty: 0.05,
+        lastTokens: 64,
+      },
       onTextChunk(chunk: string) {
         callbacks.onText(chunk);
         finalText += chunk;
       },
-    });
+    };
+
+    try {
+      finalText = await session.prompt(lastMsg.content, promptOptions);
+    } catch (err) {
+      const msg = (err as Error).message ?? String(err);
+      const isContextFull =
+        msg.includes("context size") ||
+        msg.includes("VRAM") ||
+        msg.includes("too large") ||
+        msg.includes("context length") ||
+        msg.includes("sequence");
+
+      if (!isContextFull) throw err;
+
+      // Context window exhausted — dispose and start fresh, then retry once.
+      console.error(
+        chalk.yellow(
+          "\n  ⚠ Context window full — resetting conversation context. Use /clear to free memory.\n"
+        )
+      );
+      try { await (_context as LlamaContext).dispose(); } catch { /* ignore */ }
+      _context = null;
+      _session = null;
+      _sessionMsgCount = 0;
+
+      const freshContext = await model.createContext();
+      const freshSession = new LlamaChatSession({
+        contextSequence: freshContext.getSequence(),
+        systemPrompt: buildLocalSystemPrompt(),
+      });
+      _context = freshContext;
+      _session = freshSession;
+      _sessionMsgCount = 0;
+
+      finalText = await freshSession.prompt(lastMsg.content, {
+        ...promptOptions,
+        onTextChunk(chunk: string) {
+          callbacks.onText(chunk);
+          finalText += chunk;
+        },
+      });
+    }
 
     // Advance the cached message count by 2 (user + assistant)
     _sessionMsgCount += 2;
@@ -270,85 +375,100 @@ function buildLocalSystemPrompt(): string {
 
 ## Cascade Protocol
 
-Cascade Protocol is a privacy-first, local-only protocol for structured health data. It serializes clinical and wellness records as RDF/Turtle with SHACL validation, bridging clinical standards (FHIR R4, SNOMED CT, LOINC, ICD-10, RxNorm) to machine-readable knowledge graphs. All operations run locally with zero network calls.
+Cascade Protocol is a privacy-first, local-only protocol for structured health data. It serializes clinical and wellness records as RDF/Turtle, bridging clinical standards (FHIR R4, SNOMED CT, LOINC, ICD-10, RxNorm). All operations run locally.
 
 Install: npm install -g @the-cascade-protocol/cli
 
-CLI Command Structure (IMPORTANT — use these exact forms):
-  cascade pod init <path>                                          # create a pod
-  cascade pod info <path>                                          # view pod summary
-  cascade pod query <path> --conditions --json                     # query conditions
-  cascade pod query <path> --medications --json                    # query medications
-  cascade pod query <path> --lab-results --json                    # query lab results
-  cascade pod query <path> --medications --lab-results --json      # query multiple types
-  cascade convert <file.json> --from fhir --to turtle              # convert FHIR → Turtle
-  cascade validate <path>                                          # validate SHACL shapes
+## CLI Commands (use EXACTLY these forms)
 
-NOTE: "pod query" is a two-word subcommand. The format is ALWAYS:
-  cascade pod query <pod-path> --<type-flag> [--json]
-NOT: cascade <pod-path> (wrong)
-NOT: cascade query <pod-path> (wrong)
+  cascade pod init <path>                          # create a new pod
+  cascade pod info <path>                          # summary + record counts (START HERE)
+  cascade pod query <path> --conditions --json     # query conditions
+  cascade pod query <path> --medications --json    # query medications
+  cascade pod query <path> --lab-results --json    # query lab results
+  cascade pod query <path> --vital-signs --json    # CORRECT: --vital-signs (not --vitalsigns)
+  cascade pod query <path> --immunizations --json  # query immunizations
+  cascade pod query <path> --allergies --json      # query allergies
+  cascade pod query <path> --procedures --json     # query procedures
+  cascade pod query <path> --encounters --json     # query encounters
+  cascade pod query <path> --supplements --json    # query supplements
+  cascade pod query <path> --social-history --json # query social history
+  cascade pod query <path> --all --json            # ALL types — only use when explicitly asked
+  cascade convert <file.json> --from fhir --to turtle   # convert FHIR → Turtle (NOT 'pod convert')
+  cascade validate <path>                          # validate SHACL shapes
 
-Supported data types:
-  Clinical: Medication, Condition, Allergy, LabResult, VitalSign, Immunization,
-    Encounter, MedicationAdministration, ImplantedDevice, ImagingStudy, ClaimRecord, BenefitStatement
-  Wellness: HeartRate, BloodPressure, Activity, Sleep, Supplements
+ALWAYS use the full absolute pod path in cascade commands:
+  CORRECT: cascade pod query '/full/path/to/pod' --medications --json
+  WRONG:   cd '/full/path/to/pod' && cascade pod query . --medications --json
 
-Vocabulary namespaces:
-  health:   https://ns.cascadeprotocol.org/health/v1#   (wellness metrics, lab results, vitals)
-  clinical: https://ns.cascadeprotocol.org/clinical/v1# (EHR records: conditions, medications, encounters)
-  coverage: https://ns.cascadeprotocol.org/coverage/v1# (insurance: claims, benefits)
+## Query Efficiency
+
+  • ALWAYS start with cascade pod info to see counts before querying records.
+  • Use pod info for summaries; use pod query only for record-level data.
+  • NEVER use --all as a first step — too large. Query specific types based on the task.
+  • After pod info, query only the 1-2 types needed.
+
+## Common Tasks
+
+### Doctor visit preparation
+  1. cascade pod info <pod>
+  2. cascade pod query <pod> --conditions --json | jq '[.dataTypes.conditions.records[]
+       | select(.properties["health:snomedSemanticTag"] == "disorder")
+       | {name: .properties["health:conditionName"], onset: .properties["health:onsetDate"]}]'
+  3. cascade pod query <pod> --medications --json | jq '[.dataTypes.medications.records[]
+       | select(.properties["health:isActive"] == "true")
+       | {name: .properties["health:medicationName"], dose: .properties["health:dosage"]}]'
+  4. cascade pod query <pod> --lab-results --json | jq '[.dataTypes["lab-results"].records[]
+       | {test: .properties["health:testName"], value: .properties["health:resultValue"],
+          date: .properties["health:performedDate"]}] | sort_by(.date) | reverse | .[0:15]'
+  Then give specific questions to raise with the doctor based on the findings.
+
+### Convert EHR export to a pod
+  1. cascade pod init /path/to/new-pod
+  2. cascade convert <ehr-file> --from fhir --to turtle
+  3. cascade pod info /path/to/new-pod
+
+## Vocabulary Namespaces
+
+  health:   https://ns.cascadeprotocol.org/health/v1#   (lab results, vitals, medications, conditions)
+  clinical: https://ns.cascadeprotocol.org/clinical/v1# (EHR records, encounters, social history)
+  coverage: https://ns.cascadeprotocol.org/coverage/v1# (insurance, claims)
   core:     https://ns.cascadeprotocol.org/core/v1#     (identity, provenance)
 
-Key vocabulary fields by data type:
-  LabResult:   health:testName, health:resultValue, health:resultUnit, health:referenceRange,
-               health:performedDate, health:loincCode
-  Condition:   clinical:conditionName, clinical:snomedCode, health:snomedSemanticTag,
-               clinical:onsetDate, clinical:clinicalStatus ("active" | "resolved")
-  Medication:  health:medicationName, health:rxNormCode, health:dosage, health:isActive ("true"/"false"),
-               health:startDate
-  VitalSign:   health:measurementType, health:value, health:unit, health:measuredAt
-  HeartRate:   health:bpm, health:measuredAt
-  BloodPressure: health:systolic, health:diastolic, health:measuredAt
-  Activity:    health:activityType, health:duration, health:calories, health:startTime
-  Sleep:       health:sleepDuration, health:sleepQuality, health:startTime
+## Key Fields by Type
 
-Pod query JSON shape: { dataTypes: { [type]: { count, records: [{id, type, properties}] } } }
+  LabResult:    health:testName, health:resultValue, health:resultUnit, health:performedDate
+  Condition:    health:conditionName, health:snomedSemanticTag, health:onsetDate, health:clinicalStatus
+  Medication:   health:medicationName, health:dosage, health:isActive ("true"/"false"), health:startDate
+  VitalSign:    health:measurementType, health:value, health:unit, health:measuredAt
 
 ## Tools
 
-You have exactly two tools:
+  shell      — run bash commands (cascade CLI, ls, jq, wc, etc.)
+  read_file  — read a file directly (faster than shell + cat for known paths)
 
-  shell      — run any bash command (cascade CLI, directory listing, jq filters, etc.)
-  read_file  — read the text contents of a specific file (.ttl, .json, logs, etc.)
+Rules:
+  • Use read_file for any file whose path you know — do NOT use shell("cat <path>").
+  • Use shell for cascade CLI commands, directory listings, jq filters.
+  • Do not fabricate results. Use tools to get real data.
+  • When a command fails, do NOT retry the same command — diagnose and try differently.
+  • Be concise. State the result first.
 
-Tool selection rules — follow these exactly:
-  • read_file: use this to read any file whose path you know. It is faster and cleaner than shell + cat.
-    NEVER use shell("cat <path>") or shell("head <path>") to read a file. Use read_file instead.
-  • shell: use this for cascade CLI commands, listing directories (ls), running jq, counting lines (wc), etc.
-  • When a task requires BOTH reading a file AND running a command, call BOTH tools (one shell call AND one read_file call).
+## CRITICAL jq Rule
 
-Example — if asked "list the files in /tmp and then read /tmp/data.ttl":
-  Step 1: call shell with command "ls /tmp"
-  Step 2: call read_file with path "/tmp/data.ttl"
-  Do NOT call shell("cat /tmp/data.ttl") for step 2.
+Property names contain colons. Colons break jq dot notation. ALWAYS use bracket notation:
+  WRONG:   .properties.health:testName          ← ALWAYS fails (jq syntax error)
+  CORRECT: .properties["health:testName"]       ← ALWAYS use this form
 
-## Behaviour Rules
+Every property access must be .properties["namespace:propertyName"] — no exceptions.
 
-1. Use tools to complete tasks — do not fabricate results or pretend to run commands.
-2. For Cascade CLI operations use the cascade CLI (cascade pod query, cascade convert, etc.).
-3. When a tool returns an error, report it clearly. Do not retry the same command.
-4. For factual questions about the Cascade Protocol (vocabulary, format, commands) answer
-   from knowledge — do not call tools to answer conceptual questions.
-5. Be concise. State the result first, then explain if needed.
+If you see an EPIPE error (write EPIPE, Node.js stack trace), the jq filter had a syntax error.
+Fix the jq filter, not the cascade command.
 
-## Pod Query Tips
+## PHI Note
 
-  • Always pipe --json output to jq — raw output is very large.
-  • Use bracket notation ["key"] in jq for colon-prefixed field names.
-  • Conditions: filter .properties["health:snomedSemanticTag"] == "disorder" for clinical conditions.
-  • Medications: field is health:medicationName; health:isActive is "true"/"false" (string).
-  • Labs: health:testName, health:resultValue, health:resultUnit, health:performedDate.
+Records contain patient health data. Summarize findings (counts, trends, key values) rather than
+echoing raw records verbatim, unless the user explicitly asks for the raw data.
 `;
 }
 
@@ -380,14 +500,16 @@ export interface DownloadProgress {
 }
 
 /**
- * Download the default Qwen3.5-2B model to MODELS_DIR.
+ * Download a local Qwen model to MODELS_DIR.
  * Uses node-llama-cpp's built-in createModelDownloader which handles
  * HuggingFace URLs, resumable downloads, and checksum verification.
  *
+ * @param variant     "4b" (recommended) or "2b" — defaults to DEFAULT_LOCAL_MODEL_VARIANT
  * @param onProgress  Optional callback for progress updates
  * @returns           Path to the downloaded model file
  */
-export async function downloadDefaultModel(
+export async function downloadLocalModel(
+  variant: LocalModelVariant = DEFAULT_LOCAL_MODEL_VARIANT,
   onProgress?: (progress: DownloadProgress) => void
 ): Promise<string> {
   let nodeLlamaCpp: typeof import("node-llama-cpp");
@@ -399,14 +521,17 @@ export async function downloadDefaultModel(
 
   mkdirSync(MODELS_DIR, { recursive: true });
 
-  const destPath = join(MODELS_DIR, DEFAULT_LOCAL_MODEL_FILENAME);
-  if (existsSync(destPath)) {
-    return destPath;
-  }
+  const info = LOCAL_MODELS[variant];
+
+  // Check for either the downloader-prefixed filename or the plain filename (manual downloads)
+  const prefixedPath = join(MODELS_DIR, info.filename);
+  const plainPath    = join(MODELS_DIR, info.file);
+  if (existsSync(prefixedPath)) return prefixedPath;
+  if (existsSync(plainPath))    return plainPath;
 
   const { createModelDownloader } = nodeLlamaCpp;
   const downloader = await createModelDownloader({
-    modelUri: `hf:${DEFAULT_MODEL_REPO}/${DEFAULT_MODEL_FILE}`,
+    modelUri: `hf:${info.repo}/${info.file}`,
     dirPath: MODELS_DIR,
     onProgress: onProgress
       ? ({ downloadedSize, totalSize }: { downloadedSize: number; totalSize: number }) => {
@@ -420,7 +545,14 @@ export async function downloadDefaultModel(
   });
 
   await downloader.download();
-  // Use entrypointFilename which contains the actual on-disk name (includes hf_<org>_ prefix)
-  const fileName = (downloader as unknown as { entrypointFilename?: string }).entrypointFilename ?? DEFAULT_LOCAL_MODEL_FILENAME;
+  // entrypointFilename contains the actual on-disk name (includes hf_<org>_ prefix)
+  const fileName = (downloader as unknown as { entrypointFilename?: string }).entrypointFilename ?? info.filename;
   return join(MODELS_DIR, fileName);
+}
+
+/** @deprecated Use downloadLocalModel("4b") instead. Kept for backwards compatibility. */
+export function downloadDefaultModel(
+  onProgress?: (progress: DownloadProgress) => void
+): Promise<string> {
+  return downloadLocalModel(DEFAULT_LOCAL_MODEL_VARIANT, onProgress);
 }

@@ -1,0 +1,95 @@
+{
+  "provider": "local",
+  "model": "hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf",
+  "timestamp": "2026-03-26T03:47:02.536Z",
+  "passed": 6,
+  "total": 7,
+  "overallScore": 0.9142857142857144,
+  "cases": [
+    {
+      "name": "shell-single",
+      "description": "List files in /tmp → expects one shell tool call",
+      "pass": true,
+      "score": 1,
+      "notes": "command: ls -la /tmp",
+      "latencyMs": 6110,
+      "toolCallCount": 1,
+      "toolNames": [
+        "shell"
+      ]
+    },
+    {
+      "name": "shell-chain",
+      "description": "Create dir → write file → count lines (3-step chain)",
+      "pass": true,
+      "score": 1,
+      "notes": "3 shell calls, all 3 steps completed",
+      "latencyMs": 13809,
+      "toolCallCount": 3,
+      "toolNames": [
+        "shell",
+        "shell",
+        "shell"
+      ]
+    },
+    {
+      "name": "read-file",
+      "description": "Read a .ttl fixture and answer a question about its contents",
+      "pass": true,
+      "score": 1,
+      "notes": "hypertension=true, diabetes=true",
+      "latencyMs": 5596,
+      "toolCallCount": 1,
+      "toolNames": [
+        "read_file"
+      ]
+    },
+    {
+      "name": "mixed-tools",
+      "description": "Uses shell + read_file in the same turn",
+      "pass": false,
+      "score": 0.4,
+      "notes": "shell used but read_file not called",
+      "latencyMs": 6856,
+      "toolCallCount": 2,
+      "toolNames": [
+        "shell",
+        "shell"
+      ]
+    },
+    {
+      "name": "pod-query",
+      "description": "Formulates a cascade pod query shell command for conditions",
+      "pass": true,
+      "score": 1,
+      "notes": "cascade=true, pod+query=true, typeFlag=true, podPath=true",
+      "latencyMs": 4538,
+      "toolCallCount": 1,
+      "toolNames": [
+        "shell"
+      ]
+    },
+    {
+      "name": "no-tool",
+      "description": "Factual Q&A — no tool calls should be made",
+      "pass": true,
+      "score": 1,
+      "notes": "Correctly answered without tool use",
+      "latencyMs": 1958,
+      "toolCallCount": 0,
+      "toolNames": []
+    },
+    {
+      "name": "error-recovery",
+      "description": "Tool returns error — agent reports cleanly without infinite loop",
+      "pass": true,
+      "score": 1,
+      "notes": "1 shell call(s), error acknowledged cleanly",
+      "latencyMs": 2751,
+      "toolCallCount": 1,
+      "toolNames": [
+        "shell"
+      ]
+    }
+  ]
+}

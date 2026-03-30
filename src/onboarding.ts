@@ -3,11 +3,13 @@ import chalk from "chalk";
 import { loadConfig, saveConfig, getApiKey } from "./config.js";
 import {
   createProvider,
-  downloadDefaultModel,
+  downloadLocalModel,
   DEFAULT_MODELS,
   ALL_PROVIDERS,
+  LOCAL_MODELS,
   type ProviderName,
   type Provider,
+  type LocalModelVariant,
 } from "./providers/index.js";
 import { validateKeyDetailed } from "./auth.js";
 
@@ -140,9 +142,9 @@ export async function runOnboarding(): Promise<Provider> {
     },
     {
       name: "local",
-      label: "Local (Qwen3.5-2B)",
+      label: "Local (Qwen3.5-4B)",
       free: true,
-      note: "on-device, no API key, ~1.5 GB download",
+      note: "on-device, no API key, ~2.5 GB download",
       url: "cascadeprotocol.org",
     },
   ];
@@ -177,7 +179,7 @@ export async function runOnboarding(): Promise<Provider> {
 
   const stepLabel =
     chosen.name === "ollama" ? "Configure Ollama" :
-    chosen.name === "local"  ? "Download local model" :
+    chosen.name === "local"  ? "Choose and download local model" :
     "Enter your API key";
   step(2, stepLabel);
 
@@ -193,15 +195,42 @@ export async function runOnboarding(): Promise<Provider> {
     config.providers.ollama!.baseUrl = raw.trim() || defaultUrl;
   } else if (chosen.name === "local") {
     blank();
-    console.log(chalk.white("  Qwen3.5-2B runs entirely on your device — no API key or internet needed after setup."));
-    console.log(chalk.gray("  The model file is ~1.5 GB and will be saved to ~/.config/cascade-agent/models/"));
+    console.log(chalk.white("  Qwen models run entirely on your device — no API key or internet needed after setup."));
+    console.log(chalk.gray("  Models are saved to ~/.config/cascade-agent/models/\n"));
+
+    // Model size selection
+    const modelChoices: LocalModelVariant[] = ["4b", "2b"];
+    for (let i = 0; i < modelChoices.length; i++) {
+      const m = LOCAL_MODELS[modelChoices[i]];
+      const num = chalk.bold.white(`  ${i + 1}.`);
+      const name = chalk.white(m.displayName.padEnd(24));
+      const badge = m.recommended ? chalk.green(" ★ recommended") : "";
+      const detail = chalk.gray(` — ${m.accuracy} C-CDA accuracy, ${m.sizeGb} GB`);
+      console.log(`${num} ${name}${badge}${detail}`);
+    }
     blank();
+
+    let selectedVariant: LocalModelVariant = "4b";
+    while (true) {
+      const raw = await ask(rl, chalk.green("  Choose model [1-2] or Enter for recommended: "));
+      const trimmed = raw.trim();
+      if (!trimmed) { selectedVariant = "4b"; break; }
+      const n = parseInt(trimmed, 10);
+      if (n >= 1 && n <= modelChoices.length) { selectedVariant = modelChoices[n - 1]; break; }
+      console.log(chalk.red("  Enter 1 or 2, or press Enter for recommended."));
+    }
+
+    const selectedModel = LOCAL_MODELS[selectedVariant];
+    blank();
+    console.log(chalk.gray(`  Selected: ${selectedModel.displayName} (${selectedModel.sizeGb} GB)`));
+    blank();
+
     const confirm = await ask(rl, chalk.green("  Download model now? [Y/n]: "));
     if (!confirm.trim() || confirm.trim().toLowerCase() === "y") {
       let lastPercent = -1;
       process.stdout.write(chalk.gray("\n  Downloading "));
       try {
-        const modelPath = await downloadDefaultModel((progress) => {
+        const modelPath = await downloadLocalModel(selectedVariant, (progress) => {
           const pct = Math.floor(progress.percent);
           if (pct !== lastPercent && pct % 5 === 0) {
             process.stdout.write(chalk.gray(`${pct}%… `));
@@ -210,6 +239,7 @@ export async function runOnboarding(): Promise<Provider> {
         });
         console.log(chalk.green("\n  ✓ Model downloaded"));
         config.providers.local!.baseUrl = modelPath;
+        config.providers.local!.model = selectedModel.filename;
       } catch (err) {
         console.error(chalk.red(`\n  ✗ Download failed: ${(err as Error).message}`));
         rl.close(); process.exit(1);

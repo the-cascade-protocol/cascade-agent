@@ -1,7 +1,7 @@
 import type { Provider, ProviderName } from "./types.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
-import { LocalProvider, MODELS_DIR, DEFAULT_LOCAL_MODEL_FILENAME } from "./local.js";
+import { LocalProvider, MODELS_DIR, DEFAULT_LOCAL_MODEL_FILENAME, LOCAL_MODELS } from "./local.js";
 import { join } from "path";
 import type { Config } from "../config.js";
 
@@ -82,5 +82,6 @@ export function createProvider(
   }
 }
 
-export { downloadDefaultModel } from "./local.js";
+export { downloadDefaultModel, downloadLocalModel, LOCAL_MODELS } from "./local.js";
+export type { LocalModelVariant } from "./local.js";
 export type { Provider, ProviderName };

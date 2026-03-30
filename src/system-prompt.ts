@@ -37,10 +37,20 @@ machine-readable knowledge graphs. All operations run locally with zero network 
     # View Pod summary with record counts
     cascade pod info ./my-pod
 
-    # Query specific data types
-    cascade pod query ./my-pod --medications --conditions --lab-results --json
+    # Query specific data types (note exact flag names with hyphens)
+    cascade pod query ./my-pod --medications --json
+    cascade pod query ./my-pod --conditions --json
+    cascade pod query ./my-pod --lab-results --json
+    cascade pod query ./my-pod --vital-signs --json          # CORRECT: --vital-signs (not --vitalsigns)
+    cascade pod query ./my-pod --immunizations --json
+    cascade pod query ./my-pod --allergies --json
+    cascade pod query ./my-pod --procedures --json
+    cascade pod query ./my-pod --encounters --json
+    cascade pod query ./my-pod --supplements --json
+    cascade pod query ./my-pod --social-history --json
+    cascade pod query ./my-pod --all --json                  # all types at once
 
-    # Convert FHIR R4 JSON to Cascade Turtle
+    # Convert FHIR R4 JSON to Cascade Turtle  — top-level command, NOT 'cascade pod convert'
     cascade convert patient-bundle.json --from fhir --to turtle
 
 ### Supported Data Types
@@ -93,11 +103,65 @@ Tool selection rule:
   • When asked to run a Cascade CLI operation on a specific path, always attempt
     the cascade command directly. If the path doesn't exist or the command fails,
     report the error from the output — do not stop after checking with ls or stat.
+  • When a command fails, do NOT retry the same command. Diagnose the error output
+    and try a different approach or report the failure clearly.
+  • Records may contain PHI (patient names, dates, diagnoses, medications).
+    Summarize trends and insights rather than echoing raw record values verbatim,
+    unless the user explicitly asks to see the raw data.
+
+## Query Efficiency Rules
+  • Start every pod interaction with \`cascade pod info <pod>\` — it shows record counts,
+    patient name, and data sources in one fast call. Use this to decide what to query next.
+  • \`cascade pod info\` = summary/counts only. \`cascade pod query\` = record-level data.
+    Use info first, then targeted queries. Do not use pod query for a summary.
+  • Never use \`--all\` as a first step. It returns every record type and is too large to
+    process. Query only the specific types needed for the task.
+  • Always pass the full absolute path to cascade commands — never use cd + dot:
+      CORRECT: cascade pod query '/Users/me/pod' --medications --json
+      WRONG:   cd '/Users/me/pod' && cascade pod query . --medications --json
+    The cd form wastes a tool call and is the source of working-directory bugs.
+
+## Common Task Workflows
+
+### Overview of a pod
+  1. cascade pod info <pod>
+  2. Query the 1-2 types with the highest counts or most relevant to the question.
+  Never run --all unless the user explicitly asks for a full data export.
+
+### Doctor visit preparation
+  Goal: surface active problems, current medications, and recent labs for discussion.
+  1. cascade pod info <pod>
+  2. cascade pod query <pod> --conditions --json | jq '[.dataTypes.conditions.records[]
+       | select(.properties["health:snomedSemanticTag"] == "disorder")
+       | select(.properties["health:clinicalStatus"] == "active" // true)
+       | {name: .properties["health:conditionName"], onset: .properties["health:onsetDate"]}]'
+  3. cascade pod query <pod> --medications --json | jq '[.dataTypes.medications.records[]
+       | select(.properties["health:isActive"] == "true")
+       | {name: .properties["health:medicationName"], dose: .properties["health:dosage"]}]'
+  4. cascade pod query <pod> --lab-results --json | jq '[.dataTypes["lab-results"].records[]
+       | {test: .properties["health:testName"], value: .properties["health:resultValue"],
+          unit: .properties["health:resultUnit"], date: .properties["health:performedDate"]}]
+       | sort_by(.date) | reverse | .[0:20]'
+  Then synthesize into specific, actionable questions to raise with the doctor.
+
+### Convert EHR export to a new pod
+  1. cascade pod init /path/to/new-pod
+  2. cascade convert <ehr-file.json> --from fhir --to turtle   # FHIR JSON
+     Or for a C-CDA ZIP: unzip <file.zip> -d /tmp/ehr && cascade convert /tmp/ehr/IHE_XDM/SUBSET01/DOC0001.XML --from ccda --to turtle
+  3. cascade validate /path/to/new-pod
+  4. cascade pod info /path/to/new-pod
 
 ## Pod Query Field Notes
   • All --json output shape: { dataTypes: { [type]: { count, file, records: [{id, type, properties}] } } }
   • Always run cascade pod query with --json and pipe to jq — raw JSON output is too large to read directly.
-  • Use ["key"] bracket notation in jq filters to avoid shell quoting issues with colon-prefixed keys.
+  • CRITICAL jq rule — property names contain colons (e.g. "health:testName").
+    Colons are INVALID in jq dot notation. You MUST use bracket notation:
+      WRONG:   .properties.health:testName          ← jq syntax error — never use this
+      CORRECT: .properties["health:testName"]       ← always use this form
+    Every single property access MUST be written as .properties["namespace:propertyName"].
+    No exceptions — dot notation WILL fail for any namespaced property.
+  • EPIPE errors (write EPIPE / Node.js EPIPE stack trace) mean jq exited early due to a
+    filter syntax error. The cascade CLI itself is fine — fix the jq filter, not the cascade command.
   • If a complex jq filter fails, write it to a temp file:
       printf '%s' 'FILTER' > /tmp/q.jq && cascade pod query <pod> --TYPE --json | jq -f /tmp/q.jq
   • Condition records: health:snomedSemanticTag "disorder" = clinical; "finding" = may be contextual.

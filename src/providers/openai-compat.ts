@@ -132,8 +132,14 @@ export class OpenAICompatProvider implements Provider {
 
     const openAITools = toOpenAITools(allTools);
     let finalText = "";
+    const MAX_TOOL_ITERATIONS = 20;
+    let iterations = 0;
 
     while (true) {
+      if (++iterations > MAX_TOOL_ITERATIONS) {
+        finalText += "\n\n[Agent halted: exceeded maximum tool-call iterations. Please rephrase your request or break it into smaller steps.]";
+        break;
+      }
       // Accumulator for streamed tool-call chunks
       const pending: Record<
         number,

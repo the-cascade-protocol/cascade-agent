@@ -1,0 +1,73 @@
+{
+  "provider": "local",
+  "model": "hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf",
+  "timestamp": "2026-03-26T03:58:53.214Z",
+  "passed": 3,
+  "total": 5,
+  "overallScore": 0.79,
+  "cases": [
+    {
+      "name": "shell-single",
+      "description": "List files in /tmp → expects one shell tool call",
+      "pass": true,
+      "score": 1,
+      "notes": "command: ls -la /tmp | wc -l",
+      "latencyMs": 5159,
+      "toolCallCount": 1,
+      "toolNames": [
+        "shell"
+      ]
+    },
+    {
+      "name": "shell-chain",
+      "description": "Create dir → write file → count lines (3-step chain)",
+      "pass": true,
+      "score": 1,
+      "notes": "3 shell calls, all 3 steps completed",
+      "latencyMs": 16985,
+      "toolCallCount": 3,
+      "toolNames": [
+        "shell",
+        "shell",
+        "shell"
+      ]
+    },
+    {
+      "name": "read-file",
+      "description": "Read a .ttl fixture and answer a question about its contents",
+      "pass": true,
+      "score": 1,
+      "notes": "hypertension=true, diabetes=true",
+      "latencyMs": 6827,
+      "toolCallCount": 1,
+      "toolNames": [
+        "read_file"
+      ]
+    },
+    {
+      "name": "mixed-tools",
+      "description": "Uses shell + read_file in the same turn",
+      "pass": false,
+      "score": 0.4,
+      "notes": "shell used but read_file not called",
+      "latencyMs": 8160,
+      "toolCallCount": 2,
+      "toolNames": [
+        "shell",
+        "shell"
+      ]
+    },
+    {
+      "name": "pod-query",
+      "description": "Formulates a cascade pod query shell command for conditions",
+      "pass": false,
+      "score": 0.55,
+      "notes": "cascade=true, pod+query=false, typeFlag=false, podPath=true",
+      "latencyMs": 3466,
+      "toolCallCount": 1,
+      "toolNames": [
+        "shell"
+      ]
+    }
+  ]
+}

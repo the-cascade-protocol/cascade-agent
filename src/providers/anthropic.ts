@@ -54,8 +54,14 @@ export class AnthropicProvider implements Provider {
     // Cast tools — CanonicalTool is structurally identical to Anthropic.Tool
     const anthropicTools = allTools as unknown as Anthropic.Tool[];
     let finalText = "";
+    const MAX_TOOL_ITERATIONS = 20;
+    let iterations = 0;
 
     while (true) {
+      if (++iterations > MAX_TOOL_ITERATIONS) {
+        finalText += "\n\n[Agent halted: exceeded maximum tool-call iterations. Please rephrase your request or break it into smaller steps.]";
+        break;
+      }
       const stream = this.client.messages.stream({
         model: this.model,
         max_tokens: 4096,

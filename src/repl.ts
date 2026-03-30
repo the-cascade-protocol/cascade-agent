@@ -89,7 +89,9 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
     console.log(
       chalk.gray("Type your request, or ") +
       chalk.cyan("/help") +
-      chalk.gray(" for commands.\n")
+      chalk.gray(" for commands. End a line with ") +
+      chalk.cyan("\\") +
+      chalk.gray(" to continue on the next line.\n")
     );
     console.log(chalk.gray(`  Session log: ${logger.filePath}\n`));
   }
@@ -105,9 +107,24 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
 
   rl.prompt();
 
+  // Multi-line buffer: lines ending with \ are joined before processing.
+  let lineBuffer: string[] = [];
+
   await new Promise<void>((resolve) => {
     rl.on("line", async (line) => {
-      const input = line.trim();
+      // ── Multi-line continuation ───────────────────────────────────────────
+      if (line.endsWith("\\")) {
+        lineBuffer.push(line.slice(0, -1).trimEnd());
+        process.stdout.write(chalk.gray("  "));  // continuation indent
+        return;
+      }
+
+      const input = (lineBuffer.length > 0
+        ? [...lineBuffer, line].join(" ")
+        : line
+      ).trim();
+      lineBuffer = [];
+
       if (!input) { rl.prompt(); return; }
 
       // ── Slash commands ────────────────────────────────────────────────────
