@@ -622,7 +622,7 @@ export async function runServeMode(port: number = DEFAULT_PORT, webReview = fals
   if (!documentIntelligence.isAvailable) {
     console.log('');
     console.log(chalk.yellow('  No extraction model found.'));
-    console.log(chalk.gray('  Clinical narrative extraction requires Qwen3.5-2B (~1.5 GB).'));
+    console.log(chalk.gray('  Clinical narrative extraction requires a local model (~1.5–2.5 GB).'));
     console.log(chalk.gray('  This is a one-time download — the same model powers the conversational agent.'));
     console.log('');
 

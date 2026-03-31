@@ -8,6 +8,7 @@ import {
   downloadDefaultModel,
   type DownloadProgress,
 } from '../providers/local.js';
+import { loadConfig } from '../config.js';
 
 export type CDASection =
   | 'medications' | 'conditions' | 'labResults' | 'allergies'
@@ -56,7 +57,13 @@ export class DocumentIntelligenceService {
   private _model: unknown = null;
 
   constructor() {
-    this.modelPath = join(MODELS_DIR, DEFAULT_LOCAL_MODEL_FILENAME);
+    // Prefer the configured model path (baseUrl) over the default filename,
+    // so the service uses whichever model the user actually downloaded.
+    const config = loadConfig();
+    const configuredPath = config.providers?.local?.baseUrl;
+    this.modelPath = (configuredPath && existsSync(configuredPath))
+      ? configuredPath
+      : join(MODELS_DIR, DEFAULT_LOCAL_MODEL_FILENAME);
   }
 
   /**
