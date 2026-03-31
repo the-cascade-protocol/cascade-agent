@@ -21,6 +21,7 @@ import chalk from "chalk";
 import { tools as builtinTools, executeTool, type ToolInput } from "../tools.js";
 import type { CanonicalTool } from "../tools.js";
 import type { Provider, SimpleMessage, AgentCallbacks, ProviderName } from "./types.js";
+import { getLaunchContext } from "../system-prompt.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -371,7 +372,13 @@ function simplifyDescription(name: string, original: string): string {
  *  - llms.txt content embedded so the model can answer NLU questions about Cascade
  */
 function buildLocalSystemPrompt(): string {
+  const launchContext = getLaunchContext();
+  const launchSection = launchContext
+    ? `\n## Launch Context\n\n${launchContext}\n\nWhen no pod path is specified, use the pod in the Launch Context.\nDo NOT search home directories or guess pod paths.\nAlways tell the user which pod you are querying.\n`
+    : "";
+
   return `You are Cascade Agent, a conversational assistant for the Cascade Protocol health data system.
+${launchSection}
 
 ## Cascade Protocol
 
@@ -464,6 +471,33 @@ Every property access must be .properties["namespace:propertyName"] — no excep
 
 If you see an EPIPE error (write EPIPE, Node.js stack trace), the jq filter had a syntax error.
 Fix the jq filter, not the cascade command.
+
+## Field Discovery
+
+When a jq filter returns [] or all values are null, the expected fields may not exist in this pod.
+ALWAYS run a field-discovery query first, then write filters using only keys that are present:
+  cascade pod query <pod> --TYPE --json | jq '.dataTypes.TYPE.records[0].properties | keys'
+
+## Medication Records — RxNorm-Only Pods
+
+C-CDA/EHR-imported pods often have NO health:medicationName and NO health:isActive.
+The only identifier is health:rxNormCode (a full URI — extract code: split("/") | last).
+To get current medications when health:isActive is absent, deduplicate by most-recent start date:
+  cascade pod query <pod> --medications --json | jq '
+    [.dataTypes.medications.records[]
+     | {rxnorm: (.properties["health:rxNormCode"] | split("/") | last),
+        dose: .properties["health:doseQuantity"],
+        unit: .properties["health:doseUnit"],
+        start: .properties["health:startDate"]}]
+    | group_by(.rxnorm) | map(sort_by(.start) | last)
+    | sort_by(.start) | reverse'
+Use your knowledge of RxNorm codes or drug classes to identify medication types from the codes.
+
+## read_file vs shell
+
+NEVER use shell("cat <path>") or shell("head <path>") to read a file.
+Use the read_file tool instead — it is ALWAYS faster and cleaner for reading known file paths.
+shell is ONLY for cascade CLI commands, ls, jq filters, wc, etc.
 
 ## PHI Note
 

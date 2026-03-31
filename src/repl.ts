@@ -1,5 +1,6 @@
 import readline from "readline";
 import { execSync } from "child_process";
+import { existsSync } from "fs";
 import chalk from "chalk";
 import { runAgent, type SimpleMessage } from "./agent.js";
 import { createProvider, type ProviderName } from "./providers/index.js";
@@ -56,15 +57,15 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
   let logger = createSessionLogger(provider.providerName, provider.model);
   let messages: SimpleMessage[] = [];
 
-  // Bootstrap CLI capabilities into the system prompt.
+  // Bootstrap CLI capabilities and current-directory pod context into the system prompt.
   // Shows a one-time install tip if cascade is not found.
+  let caps: string | undefined;
   try {
-    const caps = execSync("cascade capabilities", {
+    caps = execSync("cascade capabilities", {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
     }).trim();
-    initSystemPrompt(caps);
   } catch (err) {
     const stderr = (err as { stderr?: Buffer }).stderr?.toString() ?? "";
     const notInstalled =
@@ -79,6 +80,36 @@ export async function startRepl(initialProvider: Provider): Promise<void> {
       );
     }
   }
+
+  // Probe the current working directory for a pod so the model knows where the
+  // user launched from, and uses it by default when no pod path is specified.
+  // A real pod has index.ttl at its root — use that as the presence check rather
+  // than relying on cascade pod info exit code (which is 0 for any directory).
+  const cwd = process.cwd();
+  const cwdEscaped = cwd.replace(/'/g, "'\\''");
+  let podContext: string;
+  const hasPodIndex = existsSync(`${cwd}/index.ttl`);
+  if (hasPodIndex) {
+    let podInfoOutput = "";
+    try {
+      podInfoOutput = execSync(`cascade pod info '${cwdEscaped}'`, {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+    } catch { /* ignore — index.ttl is enough to confirm it's a pod */ }
+    podContext =
+      `The user launched cascade-agent from: ${cwd}\n` +
+      `This directory IS a Cascade pod. Use it as the default pod when no path is specified.\n\n` +
+      (podInfoOutput || `Pod path: ${cwd}`);
+    console.log(chalk.gray(`  Pod detected: ${cwd}\n`));
+  } else {
+    podContext =
+      `The user launched cascade-agent from: ${cwd}\n` +
+      `This directory is NOT a Cascade pod. Ask the user for their pod path if needed.`;
+  }
+
+  initSystemPrompt(caps, podContext);
 
   function printHeader(): void {
     console.log(

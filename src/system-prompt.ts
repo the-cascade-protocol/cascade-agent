@@ -109,6 +109,14 @@ Tool selection rule:
     Summarize trends and insights rather than echoing raw record values verbatim,
     unless the user explicitly asks to see the raw data.
 
+## Pod Discovery Priority
+  When the user asks about their health data without specifying a pod path:
+  1. Check the Launch Context (above) — if the launch directory IS a Cascade pod, use it.
+     Do not search home directories or guess paths.
+  2. If the launch directory is NOT a pod, ask the user where their pod is.
+     Do not scan the filesystem looking for pods.
+  Always tell the user which pod you are querying in your first response.
+
 ## Query Efficiency Rules
   • Start every pod interaction with \`cascade pod info <pod>\` — it shows record counts,
     patient name, and data sources in one fast call. Use this to decide what to query next.
@@ -164,9 +172,23 @@ Tool selection rule:
     filter syntax error. The cascade CLI itself is fine — fix the jq filter, not the cascade command.
   • If a complex jq filter fails, write it to a temp file:
       printf '%s' 'FILTER' > /tmp/q.jq && cascade pod query <pod> --TYPE --json | jq -f /tmp/q.jq
+  • When a filter returns [] or all names are null, ALWAYS run a field-discovery query first:
+      cascade pod query <pod> --TYPE --json | jq '.dataTypes.TYPE.records[0].properties | keys'
+    Then write filters using only keys that actually exist.
   • Condition records: health:snomedSemanticTag "disorder" = clinical; "finding" = may be contextual.
     Filter clinical-only: select(.properties["health:snomedSemanticTag"] == "disorder")
-  • Medication records: health:medicationName (not drugName), health:isActive "true"/"false" (string).
+  • Medication records: health:medicationName and health:isActive may NOT be present in
+    C-CDA/EHR-imported pods. In that case, the only identifier is health:rxNormCode (stored as a
+    full URI — extract the code with: .properties["health:rxNormCode"] | split("/") | last).
+    To find current medications when health:isActive is absent, deduplicate by most-recent start date:
+      cascade pod query <pod> --medications --json | jq '
+        [.dataTypes.medications.records[]
+         | {rxnorm: (.properties["health:rxNormCode"] | split("/") | last),
+            dose: .properties["health:doseQuantity"],
+            unit: .properties["health:doseUnit"],
+            start: .properties["health:startDate"]}]
+        | group_by(.rxnorm) | map(sort_by(.start) | last)
+        | sort_by(.start) | reverse'
   • Lab result records: health:testName, health:resultValue, health:resultUnit, health:performedDate.
   • HbA1c example:
       cascade pod query <pod> --lab-results --json | jq '[.dataTypes["lab-results"].records[]
@@ -208,31 +230,43 @@ Tool selection rule:
            packs: .properties["clinical:packsPerYear"]}'`;
 
 let _capabilities: string | undefined;
+let _podContext: string | undefined;
 
-/** Call once at REPL startup with the output of \`cascade capabilities\`. */
-export function initSystemPrompt(capabilities?: string): void {
+/** Call once at REPL startup with the output of `cascade capabilities` and the
+ *  result of probing the current working directory for a pod. */
+export function initSystemPrompt(capabilities?: string, podContext?: string): void {
   _capabilities = capabilities;
+  _podContext = podContext;
 }
 
-/** Returns the full system prompt, including CLI capabilities if available. */
+/** Returns the launch context string (CWD pod probe result), if set. */
+export function getLaunchContext(): string | undefined {
+  return _podContext;
+}
+
+/** Returns the full system prompt, including CLI capabilities and launch context if available. */
 export function getSystemPrompt(): string {
+  let prompt = STATIC;
+
+  if (_podContext) {
+    prompt += "\n\n## Launch Context\n\n" + _podContext;
+  }
+
   if (_capabilities) {
-    return (
-      STATIC +
+    prompt +=
       "\n\n## Cascade CLI — Full Command Reference\n\n" +
       "The following is the live output of `cascade capabilities`.\n\n" +
       "```json\n" +
       _capabilities +
-      "\n```"
-    );
+      "\n```";
+  } else {
+    prompt +=
+      "\n\nThe Cascade CLI may not be installed. " +
+      "Run `cascade capabilities` to discover available commands, " +
+      "or `cascade --help` for basic usage.";
   }
 
-  return (
-    STATIC +
-    "\n\nThe Cascade CLI may not be installed. " +
-    "Run `cascade capabilities` to discover available commands, " +
-    "or `cascade --help` for basic usage."
-  );
+  return prompt;
 }
 
 /** @deprecated Use getSystemPrompt() — kept for reference only. */

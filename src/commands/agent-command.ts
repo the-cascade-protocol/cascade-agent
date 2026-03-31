@@ -24,10 +24,12 @@ import {
 } from "../config.js";
 import {
   createProvider,
-  downloadDefaultModel,
+  downloadLocalModel,
   DEFAULT_MODELS,
   ALL_PROVIDERS,
+  LOCAL_MODELS,
   type ProviderName,
+  type LocalModelVariant,
 } from "../providers/index.js";
 import { startRepl } from "../repl.js";
 import { runAgent, type SimpleMessage } from "../agent.js";
@@ -74,8 +76,13 @@ async function runOneShot(
   try {
     await runAgent(provider, messages, [], {
       onText(delta) { process.stdout.write(delta); logger.logAssistantText(delta); },
-      onToolStart(name, input) { void name; void input; },
-      onToolEnd(name, result) { void name; void result; },
+      onToolStart(name, input) {
+        process.stderr.write(`\n[tool: ${name}]\n`);
+        logger.logToolCall(name, input);
+      },
+      onToolEnd(name, result) {
+        logger.logToolResult(name, result);
+      },
     });
     process.stdout.write("\n");
   } finally {
@@ -182,14 +189,36 @@ export function registerAgentCommand(program: Command): void {
         const url = await ask(rl, `Ollama base URL [${defaultUrl}]: `);
         config.providers.ollama!.baseUrl = url.trim() || defaultUrl;
       } else if (providerName === "local") {
-        console.log(chalk.bold("\nLocal Provider Setup — Qwen3.5-2B\n"));
-        console.log(chalk.gray("This will download the Qwen3.5 model (~1.5 GB) to ~/.config/cascade-agent/models/\n"));
-        const confirm = await ask(rl, "Download model now? [Y/n]: ");
+        console.log(chalk.bold("\nLocal Provider Setup\n"));
+        console.log(chalk.gray("Models run entirely on-device — no API key or internet needed after setup."));
+        console.log(chalk.gray("Saved to ~/.config/cascade-agent/models/\n"));
+
+        const modelChoices: LocalModelVariant[] = ["4b", "2b"];
+        for (let i = 0; i < modelChoices.length; i++) {
+          const m = LOCAL_MODELS[modelChoices[i]];
+          const badge = m.recommended ? chalk.green(" ★ recommended") : "";
+          const detail = chalk.gray(` — ${m.accuracy} C-CDA accuracy, ${m.sizeGb} GB`);
+          console.log(`  ${chalk.white(i + 1 + ".")} ${m.displayName}${badge}${detail}`);
+        }
+        console.log();
+
+        let selectedVariant: LocalModelVariant = "4b";
+        while (true) {
+          const raw = await ask(rl, chalk.green("Choose model [1-2] or Enter for recommended: "));
+          const trimmed = raw.trim();
+          if (!trimmed) { selectedVariant = "4b"; break; }
+          const n = parseInt(trimmed, 10);
+          if (n >= 1 && n <= modelChoices.length) { selectedVariant = modelChoices[n - 1]; break; }
+          console.log(chalk.red("  Enter 1 or 2, or press Enter for recommended."));
+        }
+
+        const selectedModel = LOCAL_MODELS[selectedVariant];
+        const confirm = await ask(rl, `\nDownload ${selectedModel.displayName} (${selectedModel.sizeGb} GB) now? [Y/n]: `);
         if (!confirm.trim() || confirm.trim().toLowerCase() === "y") {
           let lastPercent = -1;
-          process.stdout.write(chalk.gray("Downloading "));
+          process.stdout.write(chalk.gray("\nDownloading "));
           try {
-            const modelPath = await downloadDefaultModel((progress) => {
+            const modelPath = await downloadLocalModel(selectedVariant, (progress) => {
               const pct = Math.floor(progress.percent);
               if (pct !== lastPercent && pct % 5 === 0) {
                 process.stdout.write(chalk.gray(`${pct}%… `));
@@ -198,6 +227,7 @@ export function registerAgentCommand(program: Command): void {
             });
             console.log(chalk.green("\n✓ Model downloaded"));
             config.providers.local!.baseUrl = modelPath;
+            config.providers.local!.model = selectedModel.filename;
           } catch (err) {
             console.error(chalk.red(`\n✗ Download failed: ${(err as Error).message}`));
             rl.close(); process.exit(1);
