@@ -43,10 +43,10 @@ function loadTemplates(): Record<string, string> {
  * Document intelligence service for clinical narrative extraction.
  *
  * Uses node-llama-cpp (in-process, same runtime as LocalProvider) to run
- * Qwen3.5-2B locally. No Ollama required. The model file is shared with the
+ * Qwen3.5-4B locally. No Ollama required. The model file is shared with the
  * agent's conversational provider — one download covers both use cases.
  *
- * Model location: ~/.config/cascade-agent/models/hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf
+ * Model location: ~/.config/cascade-agent/models/ (configured via cascade agent login)
  *
  * If the model is not present, call ensureModel() before initialize(), or
  * run `cascade-agent serve` which prompts the user to download automatically.
@@ -55,6 +55,10 @@ export class DocumentIntelligenceService {
   private readonly modelPath: string;
   private _llama: unknown = null;
   private _model: unknown = null;
+  private _context: unknown = null;
+  private _sequence: unknown = null;
+  private _currentSession: unknown = null;
+  private _evalLock: Promise<void> = Promise.resolve();
 
   constructor() {
     // Prefer the configured model path (baseUrl) over the default filename,
@@ -86,6 +90,15 @@ export class DocumentIntelligenceService {
       }
       const llama = this._llama as Awaited<ReturnType<typeof getLlama>>;
       this._model = await llama.loadModel({ modelPath: this.modelPath });
+
+      // Create a single persistent context and sequence. Re-using these across
+      // requests avoids repeated native KV-cache alloc/dealloc, which otherwise
+      // accumulates outside the V8 heap and crashes the process after ~6 requests.
+      type LoadedModel = Awaited<ReturnType<typeof llama.loadModel>>;
+      const model = this._model as LoadedModel;
+      this._context = await model.createContext();
+      type LoadedContext = Awaited<ReturnType<LoadedModel['createContext']>>;
+      this._sequence = (this._context as LoadedContext).getSequence();
     } catch (err) {
       console.error('[cascade-agent] Failed to load extraction model:', (err as Error).message);
     }
@@ -103,7 +116,7 @@ export class DocumentIntelligenceService {
   }
 
   get isAvailable(): boolean {
-    return this._model !== null;
+    return this._model !== null && this._sequence !== null;
   }
 
   /** Returns the model filename, or null if not loaded. */
@@ -112,7 +125,7 @@ export class DocumentIntelligenceService {
   }
 
   async extractFromNarrative(text: string, section: CDASection): Promise<ExtractionResult> {
-    if (!this._model) {
+    if (!this._model || !this._sequence) {
       throw new Error(
         'No extraction model loaded.\n' +
         'Run: cascade-agent serve   (will prompt to download ~1.5 GB model)\n' +
@@ -120,67 +133,101 @@ export class DocumentIntelligenceService {
       );
     }
 
-    const startMs = Date.now();
-    const prompt = buildPrompt(section, text);
+    // Serialize access to the shared context sequence. Without this lock,
+    // concurrent HTTP requests (or a new request arriving while a timed-out
+    // request is still evaluating) would call llama_decode concurrently on
+    // the same native context, causing "Eval has failed" errors.
+    let releaseLock: () => void;
+    const prevLock = this._evalLock;
+    this._evalLock = new Promise<void>((resolve) => { releaseLock = resolve; });
 
-    const { LlamaChatSession } = await import('node-llama-cpp') as typeof import('node-llama-cpp');
-
-    // Cast via unknown — node-llama-cpp is an optional dep; types only available at runtime.
-    type LoadedModel = Awaited<ReturnType<Awaited<ReturnType<typeof import('node-llama-cpp')['getLlama']>>['loadModel']>>;
-    const model = this._model as LoadedModel;
-
-    const context = await model.createContext();
-    const session = new LlamaChatSession({
-      contextSequence: context.getSequence(),
-      systemPrompt: 'You extract clinical data. Output compact JSON only. No explanation. No markdown. No <think> blocks.',
-    });
-
-    let rawOutput = '';
-    await session.prompt(prompt, {
-      temperature: 0.1,
-      maxTokens: 4096,
-      onTextChunk(chunk: string) { rawOutput += chunk; },
-    });
-
-    // Dispose context immediately — each extraction is independent
-    await context.dispose();
-
-    // Strip thinking blocks (Qwen3 think/non-think mode)
-    rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-    const latencyMs = Date.now() - startMs;
-
-    let entities: ExtractedEntity[] = [];
     try {
-      const match = rawOutput.match(/\[[\s\S]*\]/);
-      if (match) {
-        const parsed = JSON.parse(match[0]) as Record<string, unknown>[];
-        entities = parsed.map((e) => ({
-          type: (e['type'] as ExtractedEntity['type']) ?? sectionToEntityType(section),
-          displayName: (e['displayName'] as string) ?? (e['name'] as string) ?? '',
-          confidence: typeof e['confidence'] === 'number' ? e['confidence'] : 0.7,
-          sourceText: (e['sourceText'] as string) ?? (e['source'] as string) ?? '',
-          status: (e['status'] as string) ?? 'unknown',
-          normalizedCode: e['normalizedCode'] as string | undefined,
-        })).filter((e: ExtractedEntity) => e.displayName.length > 0);
-      }
+      await prevLock;
     } catch {
-      // JSON parse failed — return empty with low confidence
+      // Previous evaluation errored — that's fine, we still proceed
     }
 
-    const overallConfidence = entities.length > 0
-      ? entities.reduce((sum, e) => sum + e.confidence, 0) / entities.length
-      : 0;
+    try {
+      const startMs = Date.now();
+      const prompt = buildPrompt(section, text);
 
-    return {
-      entities,
-      confidence: overallConfidence,
-      modelId: DEFAULT_LOCAL_MODEL_FILENAME,
-      latencyMs,
-      requiresReview: overallConfidence < 0.85,
-      rawOutput,
-      schemaVersion: '1.0',
-    };
+      const { LlamaChatSession } = await import('node-llama-cpp') as typeof import('node-llama-cpp');
+
+      // Dispose the previous session to stop any lingering evaluation and
+      // cleanly release its hold on the context sequence.
+      if (this._currentSession) {
+        try {
+          (this._currentSession as InstanceType<typeof LlamaChatSession>).dispose();
+        } catch {
+          // Disposal may fail if already disposed — safe to ignore
+        }
+        this._currentSession = null;
+      }
+
+      // Clear the sequence's KV-cache state so each extraction starts from a
+      // clean slate. Without this, the sequence accumulates tokens from prior
+      // conversations (system prompt + user prompt + model response) across
+      // requests, eventually filling the 32K context window.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const seq = this._sequence as any;
+      if (typeof seq.clearHistory === 'function') {
+        await seq.clearHistory();
+      }
+
+      // Create a fresh session on the now-clean sequence.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const session = new LlamaChatSession({
+        contextSequence: this._sequence as any,
+        systemPrompt: 'You extract clinical data. Output compact JSON only. No explanation. No markdown. No <think> blocks.',
+      });
+      this._currentSession = session;
+
+      let rawOutput = '';
+      await session.prompt(prompt, {
+        temperature: 0.1,
+        maxTokens: 4096,
+        onTextChunk(chunk: string) { rawOutput += chunk; },
+      });
+
+      // Strip thinking blocks (Qwen3 think/non-think mode)
+      rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+      const latencyMs = Date.now() - startMs;
+
+      let entities: ExtractedEntity[] = [];
+      try {
+        const match = rawOutput.match(/\[[\s\S]*\]/);
+        if (match) {
+          const parsed = JSON.parse(match[0]) as Record<string, unknown>[];
+          entities = parsed.map((e) => ({
+            type: (e['type'] as ExtractedEntity['type']) ?? sectionToEntityType(section),
+            displayName: (e['displayName'] as string) ?? (e['name'] as string) ?? '',
+            confidence: typeof e['confidence'] === 'number' ? e['confidence'] : 0.7,
+            sourceText: (e['sourceText'] as string) ?? (e['source'] as string) ?? '',
+            status: (e['status'] as string) ?? 'unknown',
+            normalizedCode: e['normalizedCode'] as string | undefined,
+          })).filter((e: ExtractedEntity) => e.displayName.length > 0);
+        }
+      } catch {
+        // JSON parse failed — return empty with low confidence
+      }
+
+      const overallConfidence = entities.length > 0
+        ? entities.reduce((sum, e) => sum + e.confidence, 0) / entities.length
+        : 0;
+
+      return {
+        entities,
+        confidence: overallConfidence,
+        modelId: DEFAULT_LOCAL_MODEL_FILENAME,
+        latencyMs,
+        requiresReview: overallConfidence < 0.85,
+        rawOutput,
+        schemaVersion: '1.0',
+      };
+    } finally {
+      releaseLock!();
+    }
   }
 }
 
