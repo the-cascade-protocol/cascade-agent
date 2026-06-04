@@ -159,6 +159,43 @@ Tool selection rule:
   3. cascade validate /path/to/new-pod
   4. cascade pod info /path/to/new-pod
 
+### Pharmacogenomic reports with Codon
+  WHEN: the user supplies a patient's clinical records (FHIR) and/or a genome file (VCF or
+  23andMe array) and asks for a pharmacogenomic interpretation: a drug-gene check, a PGx
+  report, or "both reports" (patient-facing + provider-facing). This is a separate tool from
+  the cascade CLI: Cascade Codon, a PGx engine that joins a genome against the patient's own
+  medications and emits cited, confidence-labelled findings.
+
+  WHERE: Codon is a sibling repo at \`../cascade-codon\` relative to this agent. If that
+  relative path is not present, ask the user for its absolute path. Run codon FROM the
+  cascade-codon directory with the reliable \`PYTHONPATH=src python -m cascade_codon\` form
+  (the \`codon\` console script can be flaky).
+
+  HOW: \`codon analyze\` is one command that ingests records + a genome and writes BOTH reports
+  (patient + provider) as Markdown + HTML plus a structured report.json into --out-dir.
+  Give it the patient's records one of two ways:
+    • Reliable path: pass an already-converted Cascade pod with --pod <ttl>. If you only have a
+      FHIR bundle, first convert it: \`cascade convert <bundle> --from fhir --to turtle > /tmp/pod.ttl\`
+      (the same converter documented above), then pass --pod /tmp/pod.ttl.
+    • One-step path: pass the raw FHIR bundle with --fhir <bundle>; codon shells out to
+      \`cascade convert\` itself (needs Node + cascade-cli on the codon side).
+
+  Concrete (reliable) invocation, copy-runnable, run from ../cascade-codon:
+    cd ../cascade-codon && PYTHONPATH=src python -m cascade_codon analyze \\
+      --pod <pod.ttl> --genome <genome.vcf|23andme.txt> --out-dir /tmp/codon-out
+    # writes patient.md, patient.html, provider.md, provider.html, report.json
+  One-step FHIR alternative (instead of --pod):
+    cd ../cascade-codon && PYTHONPATH=src python -m cascade_codon analyze \\
+      --fhir <bundle.json> --genome <genome.vcf> --out-dir /tmp/codon-out
+  Clinical-grade input: add --pharmcat-json <file> to map a precomputed PharmCAT result
+  (the clinical CPIC path; no JVM needed).
+
+  GUARDRAIL: Codon is decision-support / informational only, NOT a medical device. It does
+  not diagnose, treat, or prescribe. Present the generated reports (point the user at the files
+  in --out-dir) and route them to a prescriber or pharmacist for any action. Never give
+  prescriptive or dosing advice yourself, and never claim a finding is confirmed. Each finding
+  carries its own confidence label and must be confirmed clinically.
+
 ## Pod Query Field Notes
   • All --json output shape: { dataTypes: { [type]: { count, file, records: [{id, type, properties}] } } }
   • Always run cascade pod query with --json and pipe to jq — raw JSON output is too large to read directly.
