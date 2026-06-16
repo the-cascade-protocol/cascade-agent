@@ -59,10 +59,11 @@ function ask(rl: readline.Interface, question: string): Promise<string> {
 }
 
 function requireApiKey(provider: ProviderName): void {
-  if (provider === "ollama" || provider === "local") return; // no key needed
+  // vertex authenticates via GCP ADC (gcloud auth application-default login), not an API key.
+  if (provider === "ollama" || provider === "local" || provider === "vertex") return; // no key needed
   const key = getApiKey(provider);
   if (!key) {
-    const envVar = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GOOGLE_AI_API_KEY", ollama: "", local: "" }[provider];
+    const envVar = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", google: "GOOGLE_AI_API_KEY", vertex: "", ollama: "", local: "" }[provider];
     console.error(
       chalk.red(`No API key for ${provider}.`) +
       `\nRun ${chalk.cyan("cascade-agent login")} or set ${chalk.cyan(envVar)}.`

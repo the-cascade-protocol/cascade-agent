@@ -2,17 +2,19 @@ import type { Provider, ProviderName } from "./types.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
 import { LocalProvider, MODELS_DIR, DEFAULT_LOCAL_MODEL_FILENAME, LOCAL_MODELS } from "./local.js";
+import { VertexProvider, DEFAULT_VERTEX_MODEL } from "./vertex.js";
 import { join } from "path";
 import type { Config } from "../config.js";
 
 /** All supported provider names, in display order. */
-export const ALL_PROVIDERS: ProviderName[] = ["anthropic", "openai", "google", "ollama", "local"];
+export const ALL_PROVIDERS: ProviderName[] = ["anthropic", "openai", "google", "vertex", "ollama", "local"];
 
 /** Default models per provider. */
 export const DEFAULT_MODELS: Record<ProviderName, string> = {
   anthropic: "claude-opus-4-6",
   openai: "gpt-4.1",           // latest as of Aug 2025 — check platform.openai.com/docs/models
   google: "gemini-flash-latest",  // free tier available via AI Studio — tracks latest flash automatically
+  vertex: DEFAULT_VERTEX_MODEL,   // BAA-covered Vertex AI; cost-efficient Gemini Flash, current gen
   ollama: "llama3.2",
   local: DEFAULT_LOCAL_MODEL_FILENAME,
 };
@@ -22,6 +24,7 @@ export const VALIDATION_MODELS: Record<ProviderName, string> = {
   anthropic: "claude-haiku-4-5",
   openai: "gpt-4o-mini",
   google: "gemini-flash-latest",
+  vertex: DEFAULT_VERTEX_MODEL,   // validated via ADC pre-flight, not an API key (see VertexProvider.validate)
   ollama: "",
   local: "",
 };
@@ -68,6 +71,17 @@ export function createProvider(
       );
     }
 
+    case "vertex": {
+      // BAA-covered Vertex AI. Auth is via GCP ADC, NOT an API key, so there is
+      // deliberately no apiKey here. The project comes from GOOGLE_CLOUD_PROJECT
+      // (resolved inside VertexProvider); `baseUrl` is repurposed — as it is for
+      // ollama/local — to carry an explicit region override when set. The
+      // constructor does no network I/O; validate()/runTurn() guard on config.
+      return new VertexProvider(model, {
+        location: pc.baseUrl ?? undefined,
+      });
+    }
+
     case "ollama": {
       const baseURL = pc.baseUrl ?? BASE_URLS.ollama!;
       return new OpenAICompatProvider("ollama", "ollama", model, baseURL);
@@ -84,4 +98,30 @@ export function createProvider(
 
 export { downloadDefaultModel, downloadLocalModel, LOCAL_MODELS } from "./local.js";
 export type { LocalModelVariant } from "./local.js";
+
+// Vertex AI (BAA-covered cloud) provider.
+export {
+  VertexProvider,
+  DEFAULT_VERTEX_MODEL,
+  DEFAULT_VERTEX_LOCATION,
+} from "./vertex.js";
+export type { VertexProviderOptions, VertexValidation } from "./vertex.js";
+
+// Trusted-endpoint wrapper + cloud-egress log (plan §4.4).
+export {
+  TrustedEndpointProvider,
+  designateTrustedEndpoint,
+  isLocalProvider,
+  writeEgressLog,
+  readEgressLog,
+  summarizeEgress,
+  DEFAULT_EGRESS_LOG_PATH,
+} from "./trusted-endpoint.js";
+export type {
+  EgressLogEntry,
+  EgressSummary,
+  TrustedEndpointOptions,
+  DescribesEndpoint,
+} from "./trusted-endpoint.js";
+
 export type { Provider, ProviderName };

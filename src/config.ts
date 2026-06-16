@@ -41,6 +41,9 @@ export function saveConfig(config: Config): void {
  *  Local: no API key needed — returns empty string. */
 export function getApiKey(provider: ProviderName = "anthropic"): string | undefined {
   if (provider === "local") return "";
+  // Vertex authenticates via GCP ADC (gcloud auth application-default login),
+  // not an API key — report "no key needed" like the other keyless providers.
+  if (provider === "vertex") return "";
   if (provider === "google") {
     const envKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_AI_API_KEY;
     if (envKey) return envKey;
@@ -49,6 +52,7 @@ export function getApiKey(provider: ProviderName = "anthropic"): string | undefi
       anthropic: "ANTHROPIC_API_KEY",
       openai: "OPENAI_API_KEY",
       google: "", // handled above
+      vertex: "", // ADC-authenticated (GOOGLE_CLOUD_PROJECT + gcloud ADC), no API key
       ollama: "",
       local: "",
     };
@@ -88,6 +92,8 @@ export const MODEL_ALIASES: Record<string, string> = {
   "flash25": "gemini-2.5-flash",
   "flash20": "gemini-2.0-flash",
   "pro25": "gemini-2.5-pro",
+  // Vertex AI (BAA-covered) — same Gemini model ids, different (regional) endpoint + ADC auth.
+  "vertex-flash": "gemini-flash-latest",
   // Local shortcuts
   "qwen": "hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf",
   // Ollama shortcuts are just model names — pass through as-is
@@ -102,6 +108,7 @@ export const PROVIDER_LABELS: Record<ProviderName, string> = {
   anthropic: "Anthropic (Claude)",
   openai: "OpenAI (GPT)",
   google: "Google (Gemini) — free tier available",
+  vertex: "Google Vertex AI (BAA-covered, ADC auth) — PHI-safe cloud",
   ollama: "Ollama (local, no API key needed)",
   local: "Local (Qwen3.5-2B, runs on-device, no API key needed)",
 };
