@@ -1,6 +1,9 @@
 import type { CanonicalTool, ToolInput } from "../tools.js";
 
-export type ProviderName = "anthropic" | "openai" | "google" | "ollama" | "local";
+// "vertex" = Google Vertex AI (regional aiplatform.googleapis.com, ADC auth,
+// BAA-covered / PHI-safe). DISTINCT from "google" (public AI Studio endpoint,
+// API-key auth, NOT BAA-covered). See providers/vertex.ts for the full rationale.
+export type ProviderName = "anthropic" | "openai" | "google" | "vertex" | "ollama" | "local";
 
 export interface SimpleMessage {
   role: "user" | "assistant";
