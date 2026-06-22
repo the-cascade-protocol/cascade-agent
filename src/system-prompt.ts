@@ -62,9 +62,9 @@ Conflict Resolution: UserResolution, PendingConflict
 AI Extraction: AIExtractionActivity, AIDiscardedExtraction, SocialHistoryConsent
 
 ### Vocabulary Namespaces
-  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.0 — identity, provenance, Pod structure, conflict resolution, AI extraction)
+  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.3 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy)
   health:   https://ns.cascadeprotocol.org/health/v1#   (v2.4 — wellness metrics, device data, social history)
-  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.8 — EHR/clinical records, clinical social history)
+  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.9 — EHR/clinical records, clinical social history)
   coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.3 — insurance, claims)
   pots:     https://ns.cascadeprotocol.org/pots/v1#     (v1.4 — POTS screening)
   checkup:  https://ns.cascadeprotocol.org/checkup/v1#  (v3.2 — patient-facing summaries)
@@ -255,6 +255,37 @@ Tool selection rule:
         cascade:extractionModel (model identifier), cascade:sourceNarrativeSection,
         cascade:requiresUserReview (boolean), cascade:discardReason, cascade:consentScope.
       Records link via prov:wasGeneratedBy to the extraction activity that produced them.
+  • Core v3.3 — PROVENANCE TRUST (read carefully; you reason over grounding):
+      cascade:dataProvenance values form a trust hierarchy. Two AI-related leaves exist
+      and MUST NEVER be confused — they mean opposite things for reliability:
+        - cascade:AIExtracted (ClinicalGenerated subclass): data GROUNDED in clinical
+          documents via AI/NLP extraction (e.g. an OCR'd lab report parsed by a model).
+          It traces to a real clinical source and is review-gated, not invented. This is
+          a valid provenance on clinical records (see Clinical v1.9).
+        - cascade:AIAsserted (ConsumerGenerated subclass): content surfaced by a
+          GENERAL-PURPOSE AI assistant (ChatGPT, Claude, etc.) in a patient-directed
+          conversation. It is UNGROUNDED-BY-CONSTRUCTION — not tied to any clinical
+          source — and is a safety primitive marking content that MUST be evidence-checked
+          before any reliance. Treat cascade:AIAsserted as an unverified claim, NEVER as
+          clinical fact, and NEVER equate it with cascade:AIExtracted or cascade:EHRVerified.
+      cascade:ProxyAgent (prov:Agent subclass): a caregiver-proxy actor operating a
+        patient's Pod on the patient's behalf (e.g. a parent for a minor child), distinct
+        from cascade:PatientProfile. Key properties: cascade:actsForPatient (patient WebID),
+        cascade:proxyWebID, cascade:proxyRelationship (parent | guardian | caregiver |
+        spouse | child | other), cascade:proxyScope (full | read-only | investigation-only),
+        cascade:proxyGrantedAt / cascade:proxyRevokedAt (xsd:dateTime).
+      cascade:AIGenerationActivity (prov:Activity subclass): an LLM activity that GENERATED
+        narrative content (sibling of AIExtractionActivity, which extracts). Reuses
+        cascade:extractionModel / extractionConfidence / sourceNarrativeSection /
+        requiresUserReview; adds cascade:promptVersion, cascade:generationTemperature, and
+        cascade:trigger → cascade:GenerationTrigger (cascade:InitialGeneration |
+        cascade:RegenerationAfterReclassification | cascade:AudienceRetargeting).
+      cascade:AdvisoryApplicationActivity (prov:Activity subclass): created when a Cascade
+        Advisory Patch is applied to a pod; records cascade:appliedTriplesCount.
+  • Clinical v1.9: cascade:AIExtracted is now a valid cascade:dataProvenance value on
+      clinical records (shapes-only change; no new class). A clinical record carrying
+      cascade:dataProvenance cascade:AIExtracted is grounded clinical extraction — see the
+      AIExtracted-vs-AIAsserted distinction under Core v3.3.
   • Clinical v1.8: clinical:SocialHistoryRecord (EHR-extracted social history, 42 CFR Part 2).
       Distinct from health:SocialHistoryRecord (consumer-reported).
       Key properties: clinical:socialHistoryCategory (smokingStatus | alcoholUse | substanceUse |
