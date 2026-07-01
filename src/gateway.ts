@@ -37,7 +37,7 @@ import {
 } from "./providers/trusted-endpoint.js";
 import type { CompleteOptions } from "./providers/types.js";
 
-// ── Model tiers (verified live 2026-07-01, GCP project cascade-workbench) ────
+// ── Model tiers (availability + launch stages verified live 2026-07-01) ──────
 
 export type VertexModelTier = "flash-lite" | "flash" | "flash-max";
 export type ModelLaunchStage = "GA" | "PREVIEW";
