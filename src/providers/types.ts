@@ -18,6 +18,23 @@ export interface AgentCallbacks {
   onToolEnd: (name: string, result: string) => void;
 }
 
+/**
+ * Options for one single-shot completion (the inference gateway's `complete`
+ * mode). Unlike `runTurn`, a completion carries the CALLER's system
+ * instruction verbatim, exposes no tools, and injects no agent system prompt —
+ * it is the primitive workflows (grounding, report) build on.
+ */
+export interface CompleteOptions {
+  /** A system instruction, kept separate so providers can route it. */
+  system?: string;
+  /** Lower is more deterministic. Default is left to the provider. */
+  temperature?: number;
+  /** Hard cap to prevent runaway generation. */
+  maxTokens?: number;
+  /** Cancels the in-flight request. */
+  signal?: AbortSignal;
+}
+
 /** A Provider handles one conversational turn, including any tool-use loops. */
 export interface Provider {
   readonly providerName: ProviderName;
@@ -36,6 +53,14 @@ export interface Provider {
     tools: CanonicalTool[],
     callbacks: AgentCallbacks
   ): Promise<string>;
+
+  /**
+   * Single-shot, non-streaming completion: text in, text out, no tools, no
+   * injected agent system prompt. Optional — the inference gateway
+   * feature-checks it; providers that only serve the conversational agent may
+   * omit it.
+   */
+  complete?(prompt: string, opts?: CompleteOptions): Promise<string>;
 
   /** Fetch currently available model IDs from the provider's API. */
   listModels(): Promise<string[]>;
