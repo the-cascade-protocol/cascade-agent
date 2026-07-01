@@ -9,6 +9,12 @@ import chalk from 'chalk';
 import { documentIntelligence, CDASection } from '../services/document-intelligence.js';
 import type { ExtractionResult } from '../services/document-intelligence.js';
 import type { ReviewQueueItem, ReviewDecision, ReviewResultItem } from './review.js';
+import {
+  completeViaGateway,
+  BaaViolationError,
+  GatewayRequestError,
+  type GatewayCompleteRequest,
+} from '../gateway.js';
 
 const DEFAULT_PORT = 8765;
 
@@ -686,6 +692,39 @@ export async function runServeMode(port: number = DEFAULT_PORT, webReview = fals
       return c.json(safeResult as Omit<ExtractionResult, 'rawOutput'>);
     } catch (err) {
       return c.json({ error: String(err) }, 500);
+    }
+  });
+
+  // Inference gateway v1 (Workbench platform plan §4.1/§4.7): single-shot
+  // completion on the BAA Vertex path. The gateway enforces tier→model
+  // mapping, the PHI/BAA gate, and the pre-call egress ledger; this route is
+  // only transport + error mapping. 403 = BAA violation (PHI on a non-BAA
+  // endpoint or non-GA model), 400 = malformed request, 502 = provider error.
+  app.post('/complete', async (c) => {
+    let body: GatewayCompleteRequest;
+    try {
+      body = await c.req.json() as GatewayCompleteRequest;
+    } catch {
+      return c.json({ error: 'request body must be JSON' }, 400);
+    }
+    try {
+      const result = await completeViaGateway(body);
+      return c.json(result);
+    } catch (err) {
+      if (err instanceof GatewayRequestError) {
+        return c.json({ error: err.message }, 400);
+      }
+      if (err instanceof BaaViolationError) {
+        return c.json(
+          {
+            error: err.message,
+            endpoint: err.endpoint,
+            modelStage: err.modelStage,
+          },
+          403,
+        );
+      }
+      return c.json({ error: String(err) }, 502);
     }
   });
 

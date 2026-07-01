@@ -29,3 +29,27 @@ export type { CanonicalTool, ToolInput } from "./tools.js";
 
 // Commander integration — mount `cascade agent` as a subcommand tree
 export { registerAgentCommand } from "./commands/agent-command.js";
+
+// Inference gateway v1 (Workbench platform plan §4.1/§4.7): tier mapping,
+// the PHI/BAA gate, and the pre-call egress ledger. Served over
+// `cascade-agent serve` as POST /complete; exported here for library use.
+export {
+  completeViaGateway,
+  assertBaaForPhi,
+  isBaaCoveredEndpoint,
+  BaaViolationError,
+  GatewayRequestError,
+  VERTEX_TIER_MODELS,
+  DEFAULT_MODEL_TIER,
+  podEgressLogPath,
+} from "./gateway.js";
+export type {
+  VertexModelTier,
+  ModelLaunchStage,
+  GatewayCompleteRequest,
+  GatewayCompleteResponse,
+  GatewayEgressContext,
+  GatewayProvider,
+  GatewayDeps,
+} from "./gateway.js";
+export type { CompleteOptions } from "./providers/types.js";

@@ -8,7 +8,7 @@
  * │                 Auth = a static API key. NOT BAA-covered. Do NOT send     │
  * │                 PHI to it. Fine for synthetic/eval traffic only.          │
  * │                                                                           │
- * │  • "vertex"  →  regional  {location}-aiplatform.googleapis.com (this).    │
+ * │  • "vertex"  →  aiplatform.googleapis.com, location "global" (this).      │
  * │                 Auth = GCP IAM via Application Default Credentials.        │
  * │                 HIPAA-eligible UNDER A SIGNED BAA, no training on          │
  * │                 customer data, minimizable logging. THIS is the PHI-safe  │
@@ -39,25 +39,52 @@
 
 import { execFileSync } from "child_process";
 import type { CanonicalTool } from "../tools.js";
-import type { Provider, SimpleMessage, AgentCallbacks } from "./types.js";
+import type {
+  Provider,
+  SimpleMessage,
+  AgentCallbacks,
+  CompleteOptions,
+} from "./types.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
 import type { DescribesEndpoint } from "./trusted-endpoint.js";
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
 /**
- * Default region. Vertex is regional; us-central1 has the broadest model
- * availability. Override with VERTEX_LOCATION / the constructor.
+ * Default location. The Gemini 3.x line is served ONLY from `global` (verified
+ * 2026-07-01: regional endpoints, including the previous us-central1 default,
+ * return 404 for it). `global` uses the region-prefix-free host — see
+ * {@link vertexHost}. Override with VERTEX_LOCATION / the constructor for
+ * older regional models.
  */
-export const DEFAULT_VERTEX_LOCATION = "us-central1";
+export const DEFAULT_VERTEX_LOCATION = "global";
 
 /**
- * Default model. A current-generation cost-efficient Gemini Flash — the model
- * class OQ#12 settled on for the PHI runtime (HIPAA-eligible under the BAA,
- * cheap). The exact tag is verified at build/deploy; "-latest"-style aliases
- * track the current generation automatically where Vertex supports them.
+ * Default model. The cheapest current-generation GA Gemini Flash — the tier
+ * the Workbench platform plan (§4.1.1) routes high-volume/PHI nodes to
+ * (GA ⇒ BAA-covered). Preview models must never be a default here: pre-GA
+ * offerings are excluded from the BAA.
  */
-export const DEFAULT_VERTEX_MODEL = "gemini-flash-latest";
+export const DEFAULT_VERTEX_MODEL = "gemini-3.1-flash-lite";
+
+/**
+ * The API host for a location. `global` has NO region prefix; every other
+ * location keeps the `{location}-` prefix.
+ */
+export function vertexHost(location: string): string {
+  return location === "global"
+    ? "aiplatform.googleapis.com"
+    : `${location}-aiplatform.googleapis.com`;
+}
+
+/**
+ * Vertex's OpenAI-compatible surface addresses Gemini as a publisher model:
+ * the body's `model` field must be `google/<model-id>` (verified 2026-07-01).
+ * Idempotent for callers that already pass a qualified id.
+ */
+export function qualifyVertexModel(model: string): string {
+  return model.includes("/") ? model : `google/${model}`;
+}
 
 /** Result of a pre-flight configuration check. */
 export interface VertexValidation {
@@ -175,13 +202,15 @@ export class VertexProvider implements Provider, DescribesEndpoint {
   }
 
   /**
-   * The regional OpenAI-compatible Chat Completions base URL for this project.
-   * Used by the trusted-endpoint wrapper to log the precise egress destination.
+   * The OpenAI-compatible Chat Completions base URL for this project +
+   * location (`global` by default; see {@link vertexHost}). Used by the
+   * trusted-endpoint wrapper and the gateway to log the precise egress
+   * destination and to run the BAA endpoint check.
    */
   endpointUrl(): string {
     const project = this.project ?? "<unset-project>";
     return (
-      `https://${this.location}-aiplatform.googleapis.com/v1beta1/` +
+      `https://${vertexHost(this.location)}/v1beta1/` +
       `projects/${project}/locations/${this.location}/endpoints/openapi`
     );
   }
@@ -228,14 +257,20 @@ export class VertexProvider implements Provider, DescribesEndpoint {
       );
     }
     const token = await getAccessToken();
-    const baseURL =
-      `https://${this.location}-aiplatform.googleapis.com/v1beta1/` +
-      `projects/${this.project}/locations/${this.location}/endpoints/openapi`;
+    const baseURL = this.endpointUrl();
     // The OpenAI SDK sends `apiKey` as `Authorization: Bearer <key>`, which is
     // exactly Vertex's auth scheme. We reuse OpenAICompatProvider's streaming +
     // tool loop (and its Gemini thinking-token fallback) wholesale; only the
-    // transport (endpoint + bearer token) is Vertex-specific.
-    return new OpenAICompatProvider("vertex", token, this.model, baseURL);
+    // transport (endpoint + bearer token) is Vertex-specific. The
+    // x-goog-user-project header pins the ADC quota project so local
+    // credentials don't fail with SERVICE_DISABLED (verified 2026-07-01).
+    return new OpenAICompatProvider(
+      "vertex",
+      token,
+      qualifyVertexModel(this.model),
+      baseURL,
+      { "x-goog-user-project": this.project }
+    );
   }
 
   async runTurn(
@@ -247,16 +282,28 @@ export class VertexProvider implements Provider, DescribesEndpoint {
     return delegate.runTurn(messages, tools, callbacks);
   }
 
+  /**
+   * Single-shot, non-streaming completion — the inference gateway's `complete`
+   * mode (Workbench platform plan §4.1). No tools, no injected agent system
+   * prompt; the caller's `system` is the whole instruction. The gateway wraps
+   * this with the BAA gate + egress ledger; do not call it directly for
+   * PHI-carrying payloads outside the gateway.
+   */
+  async complete(prompt: string, opts: CompleteOptions = {}): Promise<string> {
+    const delegate = await this.buildDelegate();
+    return delegate.complete(prompt, opts);
+  }
+
   async listModels(): Promise<string[]> {
     // Vertex does not expose a stable OpenAI-style /models list for Gemini, and
-    // model availability is region-specific. Return the configured model plus a
-    // small set of known current-generation Flash aliases so the picker is
-    // useful without a metadata round-trip. (No PHI; no patient egress.)
+    // model availability is location-specific. Return the configured model plus
+    // the verified Gemini 3.x line served from `global` (the gateway's tier
+    // models) so the picker is useful without a metadata round-trip.
     const known = [
       this.model,
-      "gemini-flash-latest",
-      "gemini-2.5-flash",
-      "gemini-2.0-flash",
+      "gemini-3.1-flash-lite",
+      "gemini-3-flash-preview",
+      "gemini-3.5-flash",
     ];
     return Array.from(new Set(known)).sort();
   }

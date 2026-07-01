@@ -10,7 +10,13 @@ import OpenAI from "openai";
 import { tools as builtinTools, executeTool, type ToolInput } from "../tools.js";
 import type { CanonicalTool } from "../tools.js";
 import { getSystemPrompt } from "../system-prompt.js";
-import type { Provider, SimpleMessage, AgentCallbacks, ProviderName } from "./types.js";
+import type {
+  Provider,
+  SimpleMessage,
+  AgentCallbacks,
+  ProviderName,
+  CompleteOptions,
+} from "./types.js";
 
 // Convert canonical tool definitions to OpenAI function-calling format.
 function toOpenAITools(allTools: CanonicalTool[]): OpenAI.ChatCompletionTool[] {
@@ -48,12 +54,47 @@ export class OpenAICompatProvider implements Provider {
     providerName: ProviderName,
     apiKey: string,
     model: string,
-    baseURL?: string
+    baseURL?: string,
+    defaultHeaders?: Record<string, string>
   ) {
     this.providerName = providerName;
     this.model = model;
     this.apiKey = apiKey;
-    this.client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+    this.client = new OpenAI({
+      apiKey,
+      ...(baseURL ? { baseURL } : {}),
+      ...(defaultHeaders ? { defaultHeaders } : {}),
+    });
+  }
+
+  /**
+   * Single-shot, non-streaming completion (the gateway's `complete` mode).
+   * Deliberately does NOT inject the agent system prompt or any tools: the
+   * caller's `system` is the whole instruction. Workflows (grounding, report)
+   * call this; the conversational agent keeps using `runTurn`.
+   */
+  async complete(prompt: string, opts: CompleteOptions = {}): Promise<string> {
+    const messages: OpenAI.ChatCompletionMessageParam[] = [
+      ...(opts.system
+        ? [{ role: "system" as const, content: opts.system }]
+        : []),
+      { role: "user" as const, content: prompt },
+    ];
+    const res = await this.client.chat.completions.create(
+      {
+        model: this.model,
+        messages,
+        stream: false,
+        ...(opts.temperature !== undefined
+          ? { temperature: opts.temperature }
+          : {}),
+        ...(opts.maxTokens !== undefined
+          ? { max_tokens: opts.maxTokens }
+          : {}),
+      },
+      opts.signal ? { signal: opts.signal } : undefined
+    );
+    return res.choices[0]?.message?.content ?? "";
   }
 
   async listModels(): Promise<string[]> {

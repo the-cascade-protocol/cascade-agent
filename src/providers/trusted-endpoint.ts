@@ -84,6 +84,16 @@ export interface EgressLogEntry {
    * NEVER message text, field values, or record content.
    */
   summary: EgressSummary;
+  /** Why the call happened (e.g. "assertion-grounding"). Gateway calls set it. */
+  purpose?: string;
+  /** Whether the payload was declared to carry PHI (drives the BAA gate). */
+  containsPhi?: boolean;
+  /** Launch stage of the model used ("GA" | "PREVIEW") — the BAA gate's second axis. */
+  launchStage?: string;
+  /** The gateway model tier the caller asked for (e.g. "flash-lite"). */
+  modelTier?: string;
+  /** Which app surface initiated the call (e.g. "ledger", "cloud-agent"). */
+  surface?: string;
 }
 
 /** PHI-free shape descriptor of an outbound payload. */
@@ -94,6 +104,10 @@ export interface EgressSummary {
   contentBytes: number;
   /** Number of tools/functions exposed to the model on this call. */
   toolCount: number;
+  /** Pod records the pre-send context manifest enumerated, when known. */
+  manifestRecordCount?: number;
+  /** Graded assertions the pre-send context manifest enumerated, when known. */
+  manifestAssertionCount?: number;
 }
 
 /**
@@ -136,6 +150,24 @@ export function writeEgressLog(
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`Warning: failed to write egress log at ${logPath}: ${msg}\n`);
   }
+}
+
+/**
+ * Strict variant of {@link writeEgressLog}: THROWS when the append fails.
+ * The inference gateway uses this for its Pod-ledger writes so "log before
+ * send" is load-bearing — if the audit line cannot be written, the cloud call
+ * does not happen. The best-effort variant above remains for the wrapper's
+ * default-config-dir log, where availability was chosen over strictness.
+ */
+export function writeEgressLogStrict(
+  entry: EgressLogEntry,
+  logPath: string = DEFAULT_EGRESS_LOG_PATH
+): void {
+  mkdirSync(dirname(logPath), { recursive: true, mode: 0o700 });
+  appendFileSync(logPath, JSON.stringify(entry) + "\n", {
+    encoding: "utf-8",
+    mode: 0o600,
+  });
 }
 
 /** Read back all egress entries (for the Workbench egress-log UI / audits). */

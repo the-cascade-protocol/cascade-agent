@@ -104,6 +104,8 @@ export {
   VertexProvider,
   DEFAULT_VERTEX_MODEL,
   DEFAULT_VERTEX_LOCATION,
+  vertexHost,
+  qualifyVertexModel,
 } from "./vertex.js";
 export type { VertexProviderOptions, VertexValidation } from "./vertex.js";
 
@@ -113,6 +115,7 @@ export {
   designateTrustedEndpoint,
   isLocalProvider,
   writeEgressLog,
+  writeEgressLogStrict,
   readEgressLog,
   summarizeEgress,
   DEFAULT_EGRESS_LOG_PATH,
