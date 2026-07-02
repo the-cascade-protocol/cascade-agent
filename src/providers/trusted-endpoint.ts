@@ -68,14 +68,24 @@ export const DEFAULT_EGRESS_LOG_PATH = join(
  * REDACTED BY CONSTRUCTION: there is no field here that can hold raw PHI. The
  * summary carries counts and byte totals only.
  */
+/** Non-model network callers that also write to the single egress ledger. */
+export type HttpEgressProvider = "europe-pmc" | "ncbi-eutils";
+
 export interface EgressLogEntry {
   /** ISO-8601 UTC timestamp of the call. */
   timestamp: string;
-  /** Logical provider name (e.g. "vertex"). */
-  provider: ProviderName;
+  /**
+   * What kind of call this was. Absent is read as "model". "http" marks a
+   * non-model network call (a de-identified literature-API request); for
+   * "http" entries `model` names the service, not an LLM, and no PHI/BAA
+   * axis applies. Additive: model-call writers may omit it.
+   */
+  kind?: "model" | "http";
+  /** Logical provider name (e.g. "vertex", or an HTTP literature source). */
+  provider: ProviderName | HttpEgressProvider;
   /** The concrete network endpoint the bytes were sent to. */
   endpoint: string;
-  /** The model id requested. */
+  /** The model id requested (for "http" entries: the service id). */
   model: string;
   /** Coarse direction marker — always "outbound" for a request. */
   direction: "outbound";
