@@ -72,7 +72,14 @@ function harness(
 ) {
   const rec: Recorder = { urls: [], headers: [], entries: [], logPaths: [] };
   let i = 0;
-  const fetchImpl = async (url: string, init?: { headers?: Record<string, string> }) => {
+  const fetchImpl = async (
+    url: string,
+    init?: {
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+      redirect?: "follow" | "manual" | "error";
+    },
+  ) => {
     rec.urls.push(url);
     rec.headers.push(init?.headers ?? {});
     if (typeof responses === "function") return responses(url);
@@ -230,6 +237,25 @@ async function main() {
     await fetcher(REQ); // first call: no wait
     await fetcher(REQ); // second immediate call: must wait ~100ms
     assert.ok(waits.includes(100), `expected a 100ms rate-limit wait, saw ${waits}`);
+  });
+
+  await test("refuses to follow a redirect off the allowlist (fail closed)", async () => {
+    const { rec, fetchImpl, writeLedger } = harness([okResponse("", 302)]);
+    const seenRedirect: string[] = [];
+    const fetchWrap = async (
+      u: string,
+      init?: { redirect?: "follow" | "manual" | "error" },
+    ) => {
+      seenRedirect.push(init?.redirect ?? "follow");
+      return fetchImpl(u, init);
+    };
+    const fetcher = createLiteratureFetcher(
+      {},
+      { fetchImpl: fetchWrap, writeLedger, sleep: async () => {}, now: () => 0 },
+    );
+    await assert.rejects(() => fetcher(REQ), /redirect off the allowlist/);
+    // The fetch was issued with redirect:"manual" (never auto-followed).
+    assert.equal(seenRedirect[0], "manual");
   });
 
   await test("loadLocalEnv parses KEY=value, respects comments/quotes, never overwrites", () => {

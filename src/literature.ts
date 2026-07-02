@@ -83,7 +83,11 @@ export interface HttpResponse {
 
 export type FetchImpl = (
   url: string,
-  init?: { headers?: Record<string, string>; signal?: AbortSignal },
+  init?: {
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+    redirect?: "follow" | "manual" | "error";
+  },
 ) => Promise<HttpResponse>;
 
 export interface LiteratureFetchDeps {
@@ -226,9 +230,21 @@ export function createLiteratureFetcher(
         response = await fetchImpl(finalUrl.toString(), {
           headers: { "User-Agent": userAgent() },
           signal: controller.signal,
+          // Do NOT auto-follow redirects: a 3xx to an off-allowlist host would
+          // otherwise egress to an unvetted host under this call's ledger line.
+          // These stable REST APIs do not legitimately redirect off-host, so we
+          // fail closed (the allowlist is the security boundary, not advisory).
+          redirect: "manual",
         });
       } finally {
         clearTimeout(timer);
+      }
+
+      if (response.status >= 300 && response.status < 400) {
+        throw new Error(
+          `literature fetch: refusing to follow a redirect off the allowlist ` +
+            `(HTTP ${response.status})`,
+        );
       }
 
       const retryable = response.status === 429 || response.status >= 500;
