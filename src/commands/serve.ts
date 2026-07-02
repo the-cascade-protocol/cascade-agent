@@ -13,8 +13,14 @@ import {
   completeViaGateway,
   BaaViolationError,
   GatewayRequestError,
+  podEgressLogPath,
   type GatewayCompleteRequest,
 } from '../gateway.js';
+import {
+  createLiteratureFetcher,
+  literatureConfigFromEnv,
+  loadLocalEnv,
+} from '../literature.js';
 
 const DEFAULT_PORT = 8765;
 
@@ -622,6 +628,11 @@ loadQueue();
 // ── Serve command ──────────────────────────────────────────────────────────────
 
 export async function runServeMode(port: number = DEFAULT_PORT, webReview = false): Promise<void> {
+  // Load gitignored local secrets (NCBI api key + etiquette) before anything
+  // reads process.env. A value already in the environment (e.g. injected by the
+  // host app from the OS keychain) always wins over the dev file.
+  loadLocalEnv();
+
   await documentIntelligence.initialize();
 
   // If the extraction model is not present, prompt the user to download it
@@ -725,6 +736,45 @@ export async function runServeMode(port: number = DEFAULT_PORT, webReview = fals
         );
       }
       return c.json({ error: String(err) }, 502);
+    }
+  });
+
+  // Literature fetch (grounding G-3 / platform §4.4): the single logged,
+  // allowlisted egress path for the literature tool. The NCBI api_key +
+  // etiquette live here (never the renderer); a metadata-only ledger entry is
+  // written BEFORE the dial (fail-closed); only Europe PMC + NCBI E-utilities
+  // are reachable. The de-identified query carries no PHI. 400 = bad/blocked
+  // URL, 502 = upstream/transport failure (incl. a failed fail-closed audit).
+  const literatureFetcher = createLiteratureFetcher(literatureConfigFromEnv());
+  app.post('/literature/fetch', async (c) => {
+    let body: { url?: unknown; purpose?: unknown; podDir?: unknown };
+    try {
+      body = (await c.req.json()) as typeof body;
+    } catch {
+      return c.json({ error: 'request body must be JSON' }, 400);
+    }
+    if (typeof body.url !== 'string' || body.url.length === 0) {
+      return c.json({ error: 'url is required' }, 400);
+    }
+    if (typeof body.purpose !== 'string' || body.purpose.length === 0) {
+      return c.json({ error: 'purpose is required (recorded on the ledger)' }, 400);
+    }
+    const logPath =
+      typeof body.podDir === 'string' && body.podDir.length > 0
+        ? podEgressLogPath(body.podDir)
+        : undefined;
+    if (!logPath) {
+      return c.json({ error: 'podDir is required (the egress ledger location)' }, 400);
+    }
+    try {
+      const result = await literatureFetcher({ url: body.url, purpose: body.purpose, logPath });
+      return c.json(result);
+    } catch (err) {
+      const msg = String(err instanceof Error ? err.message : err);
+      // Allowlist / URL / protocol rejections are client errors; the rest are
+      // upstream/transport (or a fail-closed audit failure = no egress happened).
+      const clientError = /allowlist|https|unparseable URL/.test(msg);
+      return c.json({ error: msg }, clientError ? 400 : 502);
     }
   });
 

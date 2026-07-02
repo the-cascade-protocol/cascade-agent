@@ -8,3 +8,7 @@ patient.json
 patient.jsonld
 patient_for_write.json
 eval/ccda-extraction-private.ts
+
+# Local secrets (NCBI API key, etc.) — never committed
+.env.local
+.env
