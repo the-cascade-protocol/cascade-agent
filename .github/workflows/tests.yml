@@ -3,8 +3,9 @@
 # March to July. Runs the build + the 6 live suites (60 tests: extraction
 # pipeline, serve, review, trusted-endpoint, gateway, literature).
 #
-# --omit=optional skips node-llama-cpp (native, large): no live suite loads a
-# model, and bonjour-service is behind a dynamic import with a runtime fallback.
+# Full npm ci (NOT --omit=optional): tsc type-resolves the optional deps
+# (node-llama-cpp, bonjour-service) even though their imports are dynamic, so
+# the build needs them installed. Prebuilt binaries make this download-only.
 name: tests
 
 on:
@@ -21,6 +22,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci --omit=optional
+      - run: npm ci
       - run: npm run build
       - run: npm test
