@@ -420,9 +420,13 @@ program
   .description("Start HTTP server for document intelligence extraction (POST /extract)")
   .option("--port <number>", "Port to listen on (default: 8765)", "8765")
   .option("--web-review", "Serve the web review UI and print its URL to stdout")
-  .action(async (opts: { port?: string; webReview?: boolean }) => {
+  .option(
+    "--exit-with-parent",
+    "Exit when stdin reaches EOF. For host apps that spawn serve as a sidecar with a piped stdin; do not combine with a null/closed stdin."
+  )
+  .action(async (opts: { port?: string; webReview?: boolean; exitWithParent?: boolean }) => {
     const port = parseInt(opts.port ?? "8765", 10);
-    await runServeMode(port, opts.webReview ?? false);
+    await runServeMode(port, opts.webReview ?? false, opts.exitWithParent ?? false);
   });
 
 // ── cascade-agent review ───────────────────────────────────────────────────

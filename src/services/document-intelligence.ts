@@ -51,6 +51,21 @@ function loadTemplates(): Record<string, string> {
  * If the model is not present, call ensureModel() before initialize(), or
  * run `cascade-agent serve` which prompts the user to download automatically.
  */
+/**
+ * KV-cache cap for the persistent extraction context. Without an explicit
+ * contextSize, node-llama-cpp's "auto" sizes the cache to fill free unified
+ * memory at spawn time (observed: 11+ GB RSS on a 32 GB host, and the machine
+ * panicked under the resulting memory pressure on 2026-07-03). Extraction
+ * inputs are single CDA sections, so 16K tokens is generous.
+ * Override via CASCADE_AGENT_EXTRACT_CONTEXT.
+ */
+const EXTRACT_CONTEXT_TOKENS = 16384;
+
+function extractContextTokens(): number {
+  const configured = Number.parseInt(process.env['CASCADE_AGENT_EXTRACT_CONTEXT'] ?? '', 10);
+  return Number.isFinite(configured) && configured > 0 ? configured : EXTRACT_CONTEXT_TOKENS;
+}
+
 export class DocumentIntelligenceService {
   private readonly modelPath: string;
   private _llama: unknown = null;
@@ -59,6 +74,7 @@ export class DocumentIntelligenceService {
   private _sequence: unknown = null;
   private _currentSession: unknown = null;
   private _evalLock: Promise<void> = Promise.resolve();
+  private _initPromise: Promise<void> | null = null;
 
   constructor() {
     // Prefer the configured model path (baseUrl) over the default filename,
@@ -76,7 +92,17 @@ export class DocumentIntelligenceService {
    */
   async initialize(): Promise<void> {
     if (this._model !== null) return;
+    // Single-flight guard: concurrent /extract requests must not double-load
+    // the model (each load is GBs of native memory).
+    if (!this._initPromise) {
+      this._initPromise = this.loadModelAndContext().finally(() => {
+        this._initPromise = null;
+      });
+    }
+    return this._initPromise;
+  }
 
+  private async loadModelAndContext(): Promise<void> {
     if (!existsSync(this.modelPath)) {
       // Model not yet downloaded — operate in structured-only mode.
       // cascade-agent serve will prompt the user to download.
@@ -96,7 +122,9 @@ export class DocumentIntelligenceService {
       // accumulates outside the V8 heap and crashes the process after ~6 requests.
       type LoadedModel = Awaited<ReturnType<typeof llama.loadModel>>;
       const model = this._model as LoadedModel;
-      this._context = await model.createContext();
+      // { max } caps the auto-sizing instead of pinning it, so low-RAM hosts
+      // can still come up with a smaller cache.
+      this._context = await model.createContext({ contextSize: { max: extractContextTokens() } });
       type LoadedContext = Awaited<ReturnType<LoadedModel['createContext']>>;
       this._sequence = (this._context as LoadedContext).getSequence();
     } catch (err) {
@@ -109,14 +137,24 @@ export class DocumentIntelligenceService {
    * Used by `cascade-agent serve` when no model is found at startup.
    */
   async ensureModel(onProgress?: (p: DownloadProgress) => void): Promise<void> {
+    await this.ensureModelDownloaded(onProgress);
+    await this.initialize();
+  }
+
+  /** Download the model file if absent, WITHOUT loading it into memory. */
+  async ensureModelDownloaded(onProgress?: (p: DownloadProgress) => void): Promise<void> {
     if (!existsSync(this.modelPath)) {
       await downloadDefaultModel(onProgress);
     }
-    await this.initialize();
   }
 
   get isAvailable(): boolean {
     return this._model !== null && this._sequence !== null;
+  }
+
+  /** True when the model file exists on disk (loaded or not). */
+  get modelFilePresent(): boolean {
+    return existsSync(this.modelPath);
   }
 
   /** Returns the model filename, or null if not loaded. */
