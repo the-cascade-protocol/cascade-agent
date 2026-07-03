@@ -1,27 +1,38 @@
 /**
- * Local provider — runs a GGUF model in-process via node-llama-cpp.
+ * Local provider — the on-device conversational REPL, backed by a **llama-server**
+ * (llama.cpp) the provider spawns or attaches to, spoken to over the OpenAI-compat
+ * chat/completions API.
  *
- * node-llama-cpp is listed in optionalDependencies so the rest of the CLI
- * works fine without it. This module is only imported when the user
- * explicitly selects the "local" provider.
+ * As of the 2026-07-03 local-inference consolidation (Slice B) this is NOT an
+ * in-process node-llama-cpp stack. Rationale, measured on this machine's Qwen3.5-4B:
+ *  - node-llama-cpp 3.18.1's bundled llama.cpp could not compile its Metal shaders
+ *    here ("tensor API is not supported") and fell back to CPU;
+ *  - a 15-case REPL tool-calling bake-off scored llama-server `--jinja` (Qwen's
+ *    native tool template) at 100% vs the node-llama-cpp JSON-schema→GBNF loop far
+ *    lower (right tool, wrong command). The port is a quality WIN, not a regression.
+ *
+ * The server is resolved by the shared {@link LlamaServerManager}: `CASCADE_LLAMA_URL`
+ * attaches to an existing server, otherwise a managed `llama-server` is spawned from
+ * the local GGUF (one model load, reused across REPL turns).
  *
  * Model file lives at:  ~/.config/cascade-agent/models/<filename>.gguf
  *
  * Gap-closing measures baked in:
  *  - temperature 0.15 for deterministic tool calls
  *  - maxTokens 2048 to prevent runaway generation
- *  - Qwen3 chat template selected automatically by node-llama-cpp
- *  - Tool params are grammar-constrained by node-llama-cpp's JSON Schema → GBNF
+ *  - chat_template_kwargs.enable_thinking=false (Qwen empty-`content` gotcha)
+ *  - simplified tool descriptions + the shell `cwd` param stripped for the small model
  */
 
 import { homedir } from "os";
-import { join, basename } from "path";
+import { join } from "path";
 import { existsSync, mkdirSync } from "fs";
-import chalk from "chalk";
+import OpenAI from "openai";
 import { tools as builtinTools, executeTool, type ToolInput } from "../tools.js";
 import type { CanonicalTool } from "../tools.js";
 import type { Provider, SimpleMessage, AgentCallbacks, ProviderName } from "./types.js";
 import { getLaunchContext } from "../system-prompt.js";
+import { LlamaServerManager } from "../services/llama-server.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -80,45 +91,30 @@ export const DEFAULT_LOCAL_MODEL_FILENAME = LOCAL_MODELS["4b"].filename;
 export const DEFAULT_MODEL_REPO = LOCAL_MODELS["4b"].repo;
 export const DEFAULT_MODEL_FILE = LOCAL_MODELS["4b"].file;
 
-// ── Module-level cache (one Llama instance + one loaded model + one session) ─
+// ── Shared local llama-server (one per process, reused across REPL turns) ──────
 
-// Using `unknown` here because node-llama-cpp is optional; we cast at use sites.
-let _llama: unknown = null;
-let _model: unknown = null;
-let _modelPath: string | null = null;
+let _serverManager: LlamaServerManager | null = null;
+let _serverReady = false;
 
-// Session-level cache — reused across REPL turns to preserve KV-cache context.
-// Avoids re-encoding all prior tokens on every user message.
-let _context: unknown = null;
-let _session: unknown = null;
-let _sessionMsgCount = 0;   // number of history messages loaded into the session
+function localServer(modelPath: string): LlamaServerManager {
+  if (!_serverManager) _serverManager = new LlamaServerManager({ modelPath });
+  return _serverManager;
+}
 
-/** True once the model has been loaded into memory at least once this process. */
+/** True once the local llama-server is up this process (drives the REPL "Loading model…" hint). */
 export function isLocalModelLoaded(): boolean {
-  return _model !== null;
+  return _serverReady;
 }
 
 /**
- * Explicitly dispose the cached Llama + model + session instances.
- * Call before process.exit() to avoid the Metal assertion crash in llama.cpp.
+ * Tear down the managed local llama-server (SIGKILL; llama-server ignores SIGTERM).
+ * Safe to call at process exit. Kept for API compatibility with the old in-process
+ * dispose; the manager also SIGKILLs its child on process exit as a backstop.
  */
 export async function disposeLlamaInstances(): Promise<void> {
-  // Dispose session first, then context, then model, then llama
-  _session = null;
-  _sessionMsgCount = 0;
-  if (_context) {
-    try { await (_context as { dispose(): Promise<void> }).dispose(); } catch { /* ignore */ }
-    _context = null;
-  }
-  if (_model) {
-    try { await (_model as { dispose(): Promise<void> }).dispose(); } catch { /* ignore */ }
-    _model = null;
-    _modelPath = null;
-  }
-  if (_llama) {
-    try { await (_llama as { dispose(): Promise<void> }).dispose(); } catch { /* ignore */ }
-    _llama = null;
-  }
+  _serverManager?.shutdown();
+  _serverManager = null;
+  _serverReady = false;
 }
 
 // ── Tool execution helper ────────────────────────────────────────────────────
@@ -136,16 +132,30 @@ async function runTool(
   return executeTool(name, input);
 }
 
+/** Canonical tool definitions → OpenAI function-calling format. */
+function toOpenAITools(allTools: CanonicalTool[]): OpenAI.ChatCompletionTool[] {
+  return allTools.map((t) => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.input_schema as unknown as Record<string, unknown>,
+    },
+  }));
+}
+
 // ── LocalProvider ────────────────────────────────────────────────────────────
 
 export class LocalProvider implements Provider {
   readonly providerName: ProviderName = "local" as ProviderName;
   readonly model: string;
   readonly modelPath: string;
+  private readonly server: LlamaServerManager;
 
   constructor(modelPath: string, model: string = DEFAULT_LOCAL_MODEL_FILENAME) {
     this.modelPath = modelPath;
     this.model = model;
+    this.server = localServer(modelPath);
   }
 
   async listModels(): Promise<string[]> {
@@ -162,39 +172,20 @@ export class LocalProvider implements Provider {
     customTools: CanonicalTool[],
     callbacks: AgentCallbacks
   ): Promise<string> {
-    // Dynamically import node-llama-cpp (optional dep)
-    let nodeLlamaCpp: typeof import("node-llama-cpp");
-    try {
-      nodeLlamaCpp = await import("node-llama-cpp");
-    } catch {
+    // Bring up (attach or managed-spawn) the shared local llama-server.
+    const base = await this.server.ensureRunning();
+    _serverReady = await this.server.health();
+    if (!_serverReady) {
       throw new Error(
-        'node-llama-cpp is not installed.\n' +
-        'Run: npm install node-llama-cpp\n' +
-        'Then re-run the agent with --provider local.'
+        "Local llama-server is not ready.\n" +
+        "Ensure `llama-server` is on PATH (or set CASCADE_LLAMA_SERVER_BIN), or set\n" +
+        "CASCADE_LLAMA_URL to attach to a running server, and that a model is downloaded\n" +
+        "(cascade-agent login --provider local)."
       );
     }
 
-    const { getLlama, LlamaChatSession, defineChatSessionFunction } = nodeLlamaCpp;
-
-    // ── Initialize Llama (cached, auto-selects Metal/CUDA/CPU) ───────────────
-    if (!_llama) {
-      _llama = await getLlama();
-    }
-    const llama = _llama as Awaited<ReturnType<typeof getLlama>>;
-
-    // ── Load model (cached by path) ──────────────────────────────────────────
-    if (!_model || _modelPath !== this.modelPath) {
-      if (!existsSync(this.modelPath)) {
-        throw new Error(
-          `Model file not found: ${this.modelPath}\n` +
-          `Run: cascade-agent login --provider local\n` +
-          `to download the model.`
-        );
-      }
-      _model = await llama.loadModel({ modelPath: this.modelPath });
-      _modelPath = this.modelPath;
-    }
-    const model = _model as Awaited<ReturnType<typeof llama.loadModel>>;
+    // llama-server speaks the OpenAI chat/completions API.
+    const client = new OpenAI({ baseURL: `${base}/v1`, apiKey: "sk-local-no-key" });
 
     // ── Build tool list (custom overrides builtins by name) ──────────────────
     const customNames = new Set(customTools.map((t) => t.name));
@@ -203,13 +194,12 @@ export class LocalProvider implements Provider {
       ...builtinTools.filter((t) => !customNames.has(t.name)),
     ];
 
-    // ── Create simplified tool descriptions for small-model context ──────────
-    // Shorter descriptions reduce prompt length and improve compliance.
-    // Also strip the optional `cwd` parameter from the shell tool — the 2B
-    // model reliably sets it to invalid paths (e.g. treating a zip filename
-    // as a directory). All shell commands should use absolute paths instead.
+    // Simplified descriptions + strip the shell `cwd` param: the small model
+    // reliably sets cwd to invalid paths (e.g. a zip filename), so all shell
+    // commands should use absolute paths instead. This tool shape scored 100%
+    // in the tool-calling bake-off that gated this port.
     const simplifiedTools = allTools.map((t) => {
-      const simplified = { ...t, description: simplifyDescription(t.name, t.description) };
+      const simplified: CanonicalTool = { ...t, description: simplifyDescription(t.name, t.description) };
       if (t.name === "shell") {
         const { cwd: _cwd, ...restProps } = simplified.input_schema.properties;
         simplified.input_schema = {
@@ -220,131 +210,146 @@ export class LocalProvider implements Provider {
       }
       return simplified;
     });
+    const openAITools = toOpenAITools(simplifiedTools);
 
-    // ── Build functions map for node-llama-cpp ───────────────────────────────
-    const functions: Record<string, ReturnType<typeof defineChatSessionFunction>> = {};
-    for (const tool of simplifiedTools) {
-      const toolRef = tool;
-      functions[tool.name] = defineChatSessionFunction({
-        description: tool.description,
-        params: tool.input_schema as Parameters<typeof defineChatSessionFunction>[0]["params"],
-        async handler(params) {
-          const input = (params as unknown ?? {}) as ToolInput;
-          callbacks.onToolStart(toolRef.name, input);
-          const result = await runTool(toolRef.name, input, customTools);
-          callbacks.onToolEnd(toolRef.name, result);
-          return result;
-        },
-      });
-    }
+    // ── Build the OpenAI message list for this turn ──────────────────────────
+    const history: OpenAI.ChatCompletionMessageParam[] = [
+      { role: "system", content: buildLocalSystemPrompt() },
+      ...messages.map((m): OpenAI.ChatCompletionMessageParam => ({ role: m.role, content: m.content })),
+    ];
 
-    // ── Resolve context + session (reuse if history matches) ────────────────
-    // Prior conversation: everything except the latest user message.
-    const historyMessages = messages.slice(0, -1);
-    const lastMsg         = messages[messages.length - 1];
-
-    type LlamaContext = Awaited<ReturnType<typeof model.createContext>>;
-    type LlamaSession = InstanceType<typeof LlamaChatSession>;
-
-    let context: LlamaContext;
-    let session: LlamaSession;
-
-    if (_session && _context && _sessionMsgCount === historyMessages.length) {
-      // Reuse cached session — KV cache already contains all prior tokens
-      context = _context as LlamaContext;
-      session = _session as LlamaSession;
-    } else {
-      // First turn or history diverged: create a fresh context + session
-      if (_context) {
-        try { await (_context as LlamaContext).dispose(); } catch { /* ignore */ }
-        _context = null;
-        _session = null;
-        _sessionMsgCount = 0;
-      }
-      context = await model.createContext();
-      session = new LlamaChatSession({
-        contextSequence: context.getSequence(),
-        systemPrompt: buildLocalSystemPrompt(),
-      });
-      if (historyMessages.length > 0) {
-        session.setChatHistory(buildChatHistory(historyMessages, nodeLlamaCpp));
-      }
-      _context = context;
-      _session = session;
-      _sessionMsgCount = historyMessages.length;
-    }
-
-    // ── Prompt with the latest user message ──────────────────────────────────
     let finalText = "";
+    const MAX_TOOL_ITERATIONS = 20;
+    let iterations = 0;
 
-    const promptOptions = {
-      functions,
-      temperature: 0.15,   // Low temp → more reliable tool call JSON
-      maxTokens: 2048,
-      // Repetition penalty prevents the degenerate "word word word" looping
-      // that small models exhibit when the context grows large.
-      repeatPenalty: {
-        penalty: 1.3,
-        frequencyPenalty: 0.1,
-        presencePenalty: 0.05,
-        lastTokens: 64,
-      },
-      onTextChunk(chunk: string) {
-        callbacks.onText(chunk);
-        finalText += chunk;
-      },
-    };
+    while (true) {
+      if (++iterations > MAX_TOOL_ITERATIONS) {
+        finalText += "\n\n[Agent halted: exceeded maximum tool-call iterations. Please rephrase your request or break it into smaller steps.]";
+        break;
+      }
 
-    try {
-      finalText = await session.prompt(lastMsg.content, promptOptions);
-    } catch (err) {
-      const msg = (err as Error).message ?? String(err);
-      const isContextFull =
-        msg.includes("context size") ||
-        msg.includes("VRAM") ||
-        msg.includes("too large") ||
-        msg.includes("context length") ||
-        msg.includes("sequence");
+      const pending: Record<number, { id: string; name: string; arguments: string }> = {};
+      let textChunk = "";
+      let finishReason: string | null = null;
 
-      if (!isContextFull) throw err;
-
-      // Context window exhausted — dispose and start fresh, then retry once.
-      console.error(
-        chalk.yellow(
-          "\n  ⚠ Context window full — resetting conversation context. Use /clear to free memory.\n"
-        )
+      const stream = await client.chat.completions.create(
+        chatBody(this.model, history, openAITools, true)
       );
-      try { await (_context as LlamaContext).dispose(); } catch { /* ignore */ }
-      _context = null;
-      _session = null;
-      _sessionMsgCount = 0;
 
-      const freshContext = await model.createContext();
-      const freshSession = new LlamaChatSession({
-        contextSequence: freshContext.getSequence(),
-        systemPrompt: buildLocalSystemPrompt(),
-      });
-      _context = freshContext;
-      _session = freshSession;
-      _sessionMsgCount = 0;
+      for await (const chunk of stream) {
+        const choice = chunk.choices[0];
+        if (!choice) continue;
+        if (choice.finish_reason) finishReason = choice.finish_reason;
+        const delta = choice.delta;
 
-      finalText = await freshSession.prompt(lastMsg.content, {
-        ...promptOptions,
-        onTextChunk(chunk: string) {
-          callbacks.onText(chunk);
-          finalText += chunk;
-        },
+        if (delta.content) {
+          callbacks.onText(delta.content);
+          textChunk += delta.content;
+          finalText += delta.content;
+        }
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            if (tc.index === undefined || !tc.function) continue;
+            const i = tc.index;
+            if (!pending[i]) pending[i] = { id: "", name: "", arguments: "" };
+            if (tc.id) pending[i].id = tc.id;
+            if (tc.function.name) pending[i].name += tc.function.name;
+            if (tc.function.arguments) pending[i].arguments += tc.function.arguments;
+          }
+        }
+      }
+
+      let calls = Object.values(pending);
+
+      // If a turn streamed nothing (some templates leave `content` empty when the
+      // reply routes through reasoning), retry once non-streaming for this turn.
+      if (finishReason !== "tool_calls" && textChunk === "" && calls.length === 0) {
+        const fallback = await client.chat.completions.create(
+          chatBody(this.model, history, openAITools, false)
+        );
+        const msg = fallback.choices[0]?.message;
+        if (msg?.content) {
+          callbacks.onText(msg.content);
+          finalText += msg.content;
+        }
+        if (fallback.choices[0]?.finish_reason === "tool_calls" && msg?.tool_calls) {
+          calls = msg.tool_calls
+            .map((tc) => tc as unknown as { id: string; function?: { name: string; arguments: string } })
+            .filter((t) => t.function?.name)
+            .map((t) => ({ id: t.id, name: t.function!.name, arguments: t.function!.arguments ?? "" }));
+        }
+        if (calls.length === 0) break;
+      }
+
+      if (finishReason !== "tool_calls" || calls.length === 0) break;
+
+      // Append the assistant message carrying the tool_calls.
+      history.push({
+        role: "assistant",
+        content: textChunk || null,
+        tool_calls: calls.map((c) => ({
+          id: c.id,
+          type: "function" as const,
+          function: { name: c.name, arguments: c.arguments },
+        })),
       });
+
+      // Execute each tool call and append its result.
+      for (const c of calls) {
+        let input: ToolInput;
+        try { input = JSON.parse(c.arguments) as ToolInput; } catch { input = {}; }
+        callbacks.onToolStart(c.name, input);
+        const result = await runTool(c.name, input, customTools);
+        callbacks.onToolEnd(c.name, result);
+        history.push({ role: "tool", tool_call_id: c.id, content: result });
+      }
     }
-
-    // Advance the cached message count by 2 (user + assistant)
-    _sessionMsgCount += 2;
 
     return finalText;
   }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Build a chat/completions request body for the local model. Carries the small-model
+ * sampling (temp 0.15 + light repetition penalties) and, crucially,
+ * `chat_template_kwargs.enable_thinking=false` — Qwen 3.x reasoning GGUFs route their
+ * thinking into `reasoning_content` and leave `content` EMPTY unless thinking is off.
+ * That llama.cpp extension is not in the OpenAI SDK types, so the body is cast; the
+ * SDK forwards unknown fields verbatim.
+ */
+function chatBody(
+  model: string,
+  messages: OpenAI.ChatCompletionMessageParam[],
+  tools: OpenAI.ChatCompletionTool[],
+  stream: true,
+): OpenAI.ChatCompletionCreateParamsStreaming;
+function chatBody(
+  model: string,
+  messages: OpenAI.ChatCompletionMessageParam[],
+  tools: OpenAI.ChatCompletionTool[],
+  stream: false,
+): OpenAI.ChatCompletionCreateParamsNonStreaming;
+function chatBody(
+  model: string,
+  messages: OpenAI.ChatCompletionMessageParam[],
+  tools: OpenAI.ChatCompletionTool[],
+  stream: boolean,
+): OpenAI.ChatCompletionCreateParams {
+  return {
+    model,
+    messages,
+    tools,
+    tool_choice: "auto",
+    temperature: 0.15,
+    max_tokens: 2048,
+    frequency_penalty: 0.1,
+    presence_penalty: 0.05,
+    stream,
+    chat_template_kwargs: { enable_thinking: false },
+  } as unknown as OpenAI.ChatCompletionCreateParams;
+}
 
 /**
  * Shorter tool descriptions tuned for small models.
@@ -506,25 +511,6 @@ echoing raw records verbatim, unless the user explicitly asks for the raw data.
 `;
 }
 
-/**
- * Convert SimpleMessage[] to node-llama-cpp ChatHistoryItem[] format.
- * Used to preload prior conversation turns before calling prompt().
- */
-function buildChatHistory(
-  messages: SimpleMessage[],
-  llama: typeof import("node-llama-cpp")
-): import("node-llama-cpp").ChatHistoryItem[] {
-  const history: import("node-llama-cpp").ChatHistoryItem[] = [];
-  for (const msg of messages) {
-    if (msg.role === "user") {
-      history.push({ type: "user", text: msg.content });
-    } else {
-      history.push({ type: "model", response: [msg.content] });
-    }
-  }
-  return history;
-}
-
 // ── Model download utility ───────────────────────────────────────────────────
 
 export interface DownloadProgress {
@@ -537,6 +523,10 @@ export interface DownloadProgress {
  * Download a local Qwen model to MODELS_DIR.
  * Uses node-llama-cpp's built-in createModelDownloader which handles
  * HuggingFace URLs, resumable downloads, and checksum verification.
+ *
+ * NOTE: this is the LAST remaining node-llama-cpp usage; Slice C of the local-
+ * inference consolidation replaces it with a plain fetch/stream downloader and
+ * removes the dependency entirely.
  *
  * @param variant     "4b" (recommended) or "2b" — defaults to DEFAULT_LOCAL_MODEL_VARIANT
  * @param onProgress  Optional callback for progress updates
