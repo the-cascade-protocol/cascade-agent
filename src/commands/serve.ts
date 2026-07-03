@@ -810,10 +810,10 @@ export async function runServeMode(
     currentModel: documentIntelligence.currentModelId,
     recommendedModels: [
       {
-        id: 'hf_unsloth_Qwen3.5-2B-Q4_K_M.gguf',
-        displayName: 'Qwen3.5-2B Q4_K_M (default, ~1.5 GB)',
-        source: 'unsloth/Qwen3.5-2B-GGUF on Hugging Face',
-        runtime: 'node-llama-cpp (in-process, no Ollama required)',
+        id: 'hf_unsloth_Qwen3.5-4B-Q4_K_M.gguf',
+        displayName: 'Qwen3.5-4B Q4_K_M (recommended, ~2.5 GB)',
+        source: 'unsloth/Qwen3.5-4B-GGUF on Hugging Face',
+        runtime: 'llama-server (llama.cpp, HTTP; managed or CASCADE_LLAMA_URL)',
       },
     ],
   }));

@@ -9,6 +9,11 @@ import {
   type DownloadProgress,
 } from '../providers/local.js';
 import { loadConfig } from '../config.js';
+import {
+  LlamaServerManager,
+  buildChatRequest,
+  EXTRACTION_GRAMMAR,
+} from './llama-server.js';
 
 export type CDASection =
   | 'medications' | 'conditions' | 'labResults' | 'allergies'
@@ -33,240 +38,204 @@ export interface ExtractionResult {
   schemaVersion: string;       // "1.0"
 }
 
+/** Test/DI seams: inject an external URL + fetch to exercise the HTTP path without a model. */
+export interface DocumentIntelligenceOptions {
+  /** Attach to this llama-server instead of spawning one. Default env CASCADE_LLAMA_URL. */
+  externalUrl?: string;
+  /** GGUF model path for a managed spawn. Default: config local.baseUrl → MODELS_DIR default. */
+  modelPath?: string;
+  /** Injected fetch (tests mock llama-server at this seam). Default the global `fetch`. */
+  fetchImpl?: typeof fetch;
+}
+
 function loadTemplates(): Record<string, string> {
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const templatesPath = join(__dirname, '..', 'prompts', 'extraction', 'templates.json');
   return JSON.parse(readFileSync(templatesPath, 'utf-8')) as Record<string, string>;
 }
 
+/** System directive for extraction. Belt-and-suspenders with the grammar. */
+const EXTRACTION_SYSTEM =
+  'You extract clinical data. Output compact JSON only. No explanation. No markdown. No <think> blocks.';
+
 /**
  * Document intelligence service for clinical narrative extraction.
  *
- * Uses node-llama-cpp (in-process, same runtime as LocalProvider) to run
- * Qwen3.5-4B locally. No Ollama required. The model file is shared with the
- * agent's conversational provider — one download covers both use cases.
+ * Backs `POST /extract` in serve mode. As of the 2026-07-03 local-inference
+ * consolidation this is a thin **llama-server** (llama.cpp) HTTP client — NOT an
+ * in-process node-llama-cpp stack. It attaches to `CASCADE_LLAMA_URL` when set
+ * (a Workbench session's shared server) or lazily spawns + supervises a managed
+ * `llama-server` from the local GGUF. Output is constrained by the JSON-array
+ * GBNF grammar shared with the Workbench extraction path.
  *
- * Model location: ~/.config/cascade-agent/models/ (configured via cascade agent login)
- *
- * If the model is not present, call ensureModel() before initialize(), or
- * run `cascade-agent serve` which prompts the user to download automatically.
+ * Model location (managed spawn): ~/.config/cascade-agent/models/ (configured
+ * via `cascade agent login --provider local`). If neither a model file nor an
+ * external URL is available, the service operates in structured-only mode and
+ * `/extract` returns 503.
  */
-/**
- * KV-cache cap for the persistent extraction context. Without an explicit
- * contextSize, node-llama-cpp's "auto" sizes the cache to fill free unified
- * memory at spawn time (observed: 11+ GB RSS on a 32 GB host, and the machine
- * panicked under the resulting memory pressure on 2026-07-03). Extraction
- * inputs are single CDA sections, so 16K tokens is generous.
- * Override via CASCADE_AGENT_EXTRACT_CONTEXT.
- */
-const EXTRACT_CONTEXT_TOKENS = 16384;
-
-function extractContextTokens(): number {
-  const configured = Number.parseInt(process.env['CASCADE_AGENT_EXTRACT_CONTEXT'] ?? '', 10);
-  return Number.isFinite(configured) && configured > 0 ? configured : EXTRACT_CONTEXT_TOKENS;
-}
-
 export class DocumentIntelligenceService {
   private readonly modelPath: string;
-  private _llama: unknown = null;
-  private _model: unknown = null;
-  private _context: unknown = null;
-  private _sequence: unknown = null;
-  private _currentSession: unknown = null;
-  private _evalLock: Promise<void> = Promise.resolve();
+  private readonly hasExternalUrl: boolean;
+  private readonly server: LlamaServerManager;
+  private _serverReady = false;
   private _initPromise: Promise<void> | null = null;
 
-  constructor() {
-    // Prefer the configured model path (baseUrl) over the default filename,
-    // so the service uses whichever model the user actually downloaded.
+  constructor(opts: DocumentIntelligenceOptions = {}) {
+    // Prefer the configured model path (baseUrl) over the default filename, so the
+    // managed spawn uses whichever model the user actually downloaded.
     const config = loadConfig();
     const configuredPath = config.providers?.local?.baseUrl;
-    this.modelPath = (configuredPath && existsSync(configuredPath))
-      ? configuredPath
-      : join(MODELS_DIR, DEFAULT_LOCAL_MODEL_FILENAME);
+    this.modelPath = opts.modelPath
+      ?? ((configuredPath && existsSync(configuredPath))
+        ? configuredPath
+        : join(MODELS_DIR, DEFAULT_LOCAL_MODEL_FILENAME));
+
+    const externalUrl = opts.externalUrl ?? process.env['CASCADE_LLAMA_URL'] ?? undefined;
+    this.hasExternalUrl = externalUrl !== undefined && externalUrl.trim().length > 0;
+
+    this.server = new LlamaServerManager({
+      externalUrl,
+      modelPath: this.modelPath,
+      fetchImpl: opts.fetchImpl,
+    });
   }
 
   /**
-   * Load the model into memory. Safe to call multiple times — no-op if already loaded.
-   * Does not download the model; call ensureModel() first if the file may be absent.
+   * Bring the llama-server backend up (attach or managed-spawn) and confirm it
+   * is healthy. Safe to call repeatedly — single-flighted so concurrent
+   * `/extract` requests share one spawn. Does not download the model; call
+   * ensureModel() first if the managed model file may be absent.
    */
   async initialize(): Promise<void> {
-    if (this._model !== null) return;
-    // Single-flight guard: concurrent /extract requests must not double-load
-    // the model (each load is GBs of native memory).
+    if (this._serverReady) return;
     if (!this._initPromise) {
-      this._initPromise = this.loadModelAndContext().finally(() => {
+      this._initPromise = this.bringUp().finally(() => {
         this._initPromise = null;
       });
     }
     return this._initPromise;
   }
 
-  private async loadModelAndContext(): Promise<void> {
-    if (!existsSync(this.modelPath)) {
-      // Model not yet downloaded — operate in structured-only mode.
-      // cascade-agent serve will prompt the user to download.
-      return;
-    }
-
+  private async bringUp(): Promise<void> {
+    // Nothing to attach to and no model on disk → structured-only mode.
+    if (!this.hasExternalUrl && !existsSync(this.modelPath)) return;
     try {
-      const { getLlama } = await import('node-llama-cpp');
-      if (!this._llama) {
-        this._llama = await getLlama();
-      }
-      const llama = this._llama as Awaited<ReturnType<typeof getLlama>>;
-      this._model = await llama.loadModel({ modelPath: this.modelPath });
-
-      // Create a single persistent context and sequence. Re-using these across
-      // requests avoids repeated native KV-cache alloc/dealloc, which otherwise
-      // accumulates outside the V8 heap and crashes the process after ~6 requests.
-      type LoadedModel = Awaited<ReturnType<typeof llama.loadModel>>;
-      const model = this._model as LoadedModel;
-      // { max } caps the auto-sizing instead of pinning it, so low-RAM hosts
-      // can still come up with a smaller cache.
-      this._context = await model.createContext({ contextSize: { max: extractContextTokens() } });
-      type LoadedContext = Awaited<ReturnType<LoadedModel['createContext']>>;
-      this._sequence = (this._context as LoadedContext).getSequence();
+      await this.server.ensureRunning();
+      this._serverReady = await this.server.health();
     } catch (err) {
-      console.error('[cascade-agent] Failed to load extraction model:', (err as Error).message);
+      console.error('[cascade-agent] Failed to start extraction llama-server:', (err as Error).message);
+      this._serverReady = false;
     }
   }
 
   /**
-   * Download the model if not already present, then initialize.
-   * Used by `cascade-agent serve` when no model is found at startup.
+   * Download the managed model if absent, then initialize. Used by
+   * `cascade-agent serve` when no model is found at startup.
    */
   async ensureModel(onProgress?: (p: DownloadProgress) => void): Promise<void> {
     await this.ensureModelDownloaded(onProgress);
     await this.initialize();
   }
 
-  /** Download the model file if absent, WITHOUT loading it into memory. */
+  /**
+   * Download the managed model file if absent, WITHOUT starting the server.
+   * No-op when attaching to an external server (it owns its own model).
+   */
   async ensureModelDownloaded(onProgress?: (p: DownloadProgress) => void): Promise<void> {
+    if (this.hasExternalUrl) return;
     if (!existsSync(this.modelPath)) {
       await downloadDefaultModel(onProgress);
     }
   }
 
+  /** Server up + model loaded (last known). */
   get isAvailable(): boolean {
-    return this._model !== null && this._sequence !== null;
+    return this._serverReady;
   }
 
-  /** True when the model file exists on disk (loaded or not). */
+  /**
+   * True when extraction is serviceable on disk: an external server is
+   * configured (nothing to download), or the managed GGUF exists.
+   */
   get modelFilePresent(): boolean {
-    return existsSync(this.modelPath);
+    return this.hasExternalUrl || existsSync(this.modelPath);
   }
 
-  /** Returns the model filename, or null if not loaded. */
+  /** The model identifier, or null when the server is not ready. */
   get currentModelId(): string | null {
-    return this._model ? DEFAULT_LOCAL_MODEL_FILENAME : null;
+    return this._serverReady ? this.server.modelId : null;
   }
 
   async extractFromNarrative(text: string, section: CDASection): Promise<ExtractionResult> {
-    if (!this._model || !this._sequence) {
+    // Ensure the backend is up (idempotent; makes direct callers work too).
+    if (!this._serverReady) await this.initialize();
+    if (!this._serverReady) {
       throw new Error(
-        'No extraction model loaded.\n' +
-        'Run: cascade-agent serve   (will prompt to download ~1.5 GB model)\n' +
-        'Or:  cascade-agent login --provider local'
+        'No extraction model available.\n' +
+        'Run: cascade-agent serve   (will prompt to download the model)\n' +
+        'Or set CASCADE_LLAMA_URL to attach to a running llama-server.'
       );
     }
 
-    // Serialize access to the shared context sequence. Without this lock,
-    // concurrent HTTP requests (or a new request arriving while a timed-out
-    // request is still evaluating) would call llama_decode concurrently on
-    // the same native context, causing "Eval has failed" errors.
-    let releaseLock: () => void;
-    const prevLock = this._evalLock;
-    this._evalLock = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const startMs = Date.now();
+    const prompt = buildPrompt(section, text);
+    const body = buildChatRequest(prompt, {
+      system: EXTRACTION_SYSTEM,
+      temperature: 0.1,
+      maxTokens: 4096,
+      grammar: EXTRACTION_GRAMMAR,
+    });
 
-    try {
-      await prevLock;
-    } catch {
-      // Previous evaluation errored — that's fine, we still proceed
-    }
+    let rawOutput = await this.server.complete(body);
+    // The grammar already forbids <think> blocks, but stay tolerant of a model
+    // that ignores it under some template.
+    rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
 
-    try {
-      const startMs = Date.now();
-      const prompt = buildPrompt(section, text);
+    const latencyMs = Date.now() - startMs;
+    const entities = parseEntities(rawOutput, section);
 
-      const { LlamaChatSession } = await import('node-llama-cpp') as typeof import('node-llama-cpp');
+    const overallConfidence = entities.length > 0
+      ? entities.reduce((sum, e) => sum + e.confidence, 0) / entities.length
+      : 0;
 
-      // Dispose the previous session to stop any lingering evaluation and
-      // cleanly release its hold on the context sequence.
-      if (this._currentSession) {
-        try {
-          (this._currentSession as InstanceType<typeof LlamaChatSession>).dispose();
-        } catch {
-          // Disposal may fail if already disposed — safe to ignore
-        }
-        this._currentSession = null;
-      }
-
-      // Clear the sequence's KV-cache state so each extraction starts from a
-      // clean slate. Without this, the sequence accumulates tokens from prior
-      // conversations (system prompt + user prompt + model response) across
-      // requests, eventually filling the 32K context window.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const seq = this._sequence as any;
-      if (typeof seq.clearHistory === 'function') {
-        await seq.clearHistory();
-      }
-
-      // Create a fresh session on the now-clean sequence.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const session = new LlamaChatSession({
-        contextSequence: this._sequence as any,
-        systemPrompt: 'You extract clinical data. Output compact JSON only. No explanation. No markdown. No <think> blocks.',
-      });
-      this._currentSession = session;
-
-      let rawOutput = '';
-      await session.prompt(prompt, {
-        temperature: 0.1,
-        maxTokens: 4096,
-        onTextChunk(chunk: string) { rawOutput += chunk; },
-      });
-
-      // Strip thinking blocks (Qwen3 think/non-think mode)
-      rawOutput = rawOutput.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-      const latencyMs = Date.now() - startMs;
-
-      let entities: ExtractedEntity[] = [];
-      try {
-        const match = rawOutput.match(/\[[\s\S]*\]/);
-        if (match) {
-          const parsed = JSON.parse(match[0]) as Record<string, unknown>[];
-          entities = parsed.map((e) => ({
-            type: (e['type'] as ExtractedEntity['type']) ?? sectionToEntityType(section),
-            displayName: (e['displayName'] as string) ?? (e['name'] as string) ?? '',
-            confidence: typeof e['confidence'] === 'number' ? e['confidence'] : 0.7,
-            sourceText: (e['sourceText'] as string) ?? (e['source'] as string) ?? '',
-            status: (e['status'] as string) ?? 'unknown',
-            normalizedCode: e['normalizedCode'] as string | undefined,
-          })).filter((e: ExtractedEntity) => e.displayName.length > 0);
-        }
-      } catch {
-        // JSON parse failed — return empty with low confidence
-      }
-
-      const overallConfidence = entities.length > 0
-        ? entities.reduce((sum, e) => sum + e.confidence, 0) / entities.length
-        : 0;
-
-      return {
-        entities,
-        confidence: overallConfidence,
-        modelId: DEFAULT_LOCAL_MODEL_FILENAME,
-        latencyMs,
-        requiresReview: overallConfidence < 0.85,
-        rawOutput,
-        schemaVersion: '1.0',
-      };
-    } finally {
-      releaseLock!();
-    }
+    return {
+      entities,
+      confidence: overallConfidence,
+      modelId: this.server.modelId,
+      latencyMs,
+      requiresReview: overallConfidence < 0.85,
+      rawOutput,
+      schemaVersion: '1.0',
+    };
   }
+}
+
+/** Parse the grammar-constrained JSON array into typed entities (tolerant). */
+function parseEntities(rawOutput: string, section: CDASection): ExtractedEntity[] {
+  const jsonText = firstJsonArray(rawOutput);
+  if (!jsonText) return [];
+  try {
+    const parsed = JSON.parse(jsonText) as Record<string, unknown>[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((e) => ({
+      type: (e['type'] as ExtractedEntity['type']) ?? sectionToEntityType(section),
+      displayName: (e['displayName'] as string) ?? (e['name'] as string) ?? '',
+      confidence: typeof e['confidence'] === 'number' ? e['confidence'] : 0.7,
+      sourceText: (e['sourceText'] as string) ?? (e['source'] as string) ?? '',
+      status: (e['status'] as string) ?? 'unknown',
+      normalizedCode: e['normalizedCode'] as string | undefined,
+    })).filter((e: ExtractedEntity) => e.displayName.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** The grammar emits a bare array; fall back to the first [...] span otherwise. */
+function firstJsonArray(text: string): string | null {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('[')) return trimmed;
+  const match = trimmed.match(/\[[\s\S]*\]/);
+  return match ? match[0] : null;
 }
 
 function sectionToEntityType(section: CDASection): ExtractedEntity['type'] {
