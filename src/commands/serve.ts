@@ -627,16 +627,37 @@ loadQueue();
 
 // ── Serve command ──────────────────────────────────────────────────────────────
 
-export async function runServeMode(port: number = DEFAULT_PORT, webReview = false): Promise<void> {
+export async function runServeMode(
+  port: number = DEFAULT_PORT,
+  webReview = false,
+  exitWithParent = false
+): Promise<void> {
+  if (exitWithParent) {
+    // Orphan guard: the host app spawns us with a piped stdin it never writes
+    // to; EOF means the parent is gone (any exit path, including SIGKILL and
+    // host crashes). SIGKILL ourselves instead of exiting cleanly — a clean
+    // exit with a loaded model aborts inside ggml-Metal teardown (SIGABRT
+    // crash reports), and we hold nothing worth flushing.
+    process.stdin.resume();
+    const onParentGone = () => { process.kill(process.pid, 'SIGKILL'); };
+    process.stdin.once('end', onParentGone);
+    process.stdin.once('close', onParentGone);
+    process.stdin.once('error', onParentGone);
+  }
+
   // Load gitignored local secrets (NCBI api key + etiquette) before anything
   // reads process.env. A value already in the environment (e.g. injected by the
   // host app from the OS keychain) always wins over the dev file.
   loadLocalEnv();
 
-  await documentIntelligence.initialize();
+  // The extraction model loads lazily on the first /extract request. Loading
+  // here cost every spawn the full weights + KV cache (GBs of native memory)
+  // even for hosts that only use /health, /complete, or /literature/fetch.
 
   // If the extraction model is not present, prompt the user to download it
-  if (!documentIntelligence.isAvailable) {
+  // (interactive terminal sessions only — never block a host-app spawn on
+  // readline).
+  if (process.stdin.isTTY && !exitWithParent && !documentIntelligence.modelFilePresent) {
     console.log('');
     console.log(chalk.yellow('  No extraction model found.'));
     console.log(chalk.gray('  Clinical narrative extraction requires a local model (~1.5–2.5 GB).'));
@@ -652,14 +673,14 @@ export async function runServeMode(port: number = DEFAULT_PORT, webReview = fals
     if (!answer.trim() || answer.trim().toLowerCase() === 'y') {
       let lastPct = -1;
       process.stdout.write(chalk.gray('\n  Downloading '));
-      await documentIntelligence.ensureModel(({ percent }) => {
+      await documentIntelligence.ensureModelDownloaded(({ percent }) => {
         const pct = Math.floor(percent);
         if (pct !== lastPct && pct % 5 === 0) {
           process.stdout.write(chalk.gray(`${pct}%… `));
           lastPct = pct;
         }
       });
-      console.log(chalk.green('\n  ✓ Model ready'));
+      console.log(chalk.green('\n  ✓ Model downloaded (loads on first extraction)'));
       console.log('');
     } else {
       console.log(chalk.gray('\n  Skipping download. Extraction endpoints will return 503 until a model is available.'));
@@ -680,6 +701,7 @@ export async function runServeMode(port: number = DEFAULT_PORT, webReview = fals
   app.get('/health', (c) => c.json({
     status: 'ok',
     modelAvailable: documentIntelligence.isAvailable,
+    modelPresent: documentIntelligence.modelFilePresent,
     modelId: documentIntelligence.currentModelId,
     version: process.env['npm_package_version'] ?? '0.4.0',
   }));
@@ -690,8 +712,12 @@ export async function runServeMode(port: number = DEFAULT_PORT, webReview = fals
     if (!body.section || !body.narrativeText) {
       return c.json({ error: 'section and narrativeText are required' }, 400);
     }
+    if (!documentIntelligence.isAvailable && documentIntelligence.modelFilePresent) {
+      // Lazy load on first use (single-flighted inside initialize()).
+      await documentIntelligence.initialize();
+    }
     if (!documentIntelligence.isAvailable) {
-      return c.json({ error: 'No extraction model loaded. Restart cascade-agent serve to download.' }, 503);
+      return c.json({ error: 'No extraction model available. Download it with `cascade-agent login --provider local`.' }, 503);
     }
     try {
       const result = await documentIntelligence.extractFromNarrative(
