@@ -918,8 +918,14 @@ export async function runServeMode(
   // ── Bonjour ──────────────────────────────────────────────────────────────────
 
   try {
-    const { Bonjour } = await import('bonjour-service');
-    const bonjour = new Bonjour();
+    // bonjour-service is an optionalDependency; the `: string` specifier keeps tsc
+    // from statically resolving it so the build (and `npm ci --omit=optional`)
+    // succeed without the package installed.
+    const bonjourSpecifier: string = 'bonjour-service';
+    const mod = await import(bonjourSpecifier) as {
+      Bonjour: new () => { publish(opts: { name: string; type: string; port: number }): void };
+    };
+    const bonjour = new mod.Bonjour();
     bonjour.publish({ name: 'Cascade Agent', type: 'cascade-agent', port });
     console.error(`[cascade-agent] Bonjour: advertising _cascade-agent._tcp on port ${port}`);
   } catch {

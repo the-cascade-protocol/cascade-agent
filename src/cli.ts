@@ -160,8 +160,9 @@ program
           config.providers.local!.baseUrl = modelPath;
         } catch (err) {
           console.error(chalk.red(`\n✗ Download failed: ${(err as Error).message}`));
-          console.log(chalk.gray("\nYou can also download manually:"));
-          console.log(chalk.gray("  npx node-llama-cpp pull --repo Qwen/Qwen3.5-2B-Instruct-GGUF --file Qwen3.5-2B-Instruct-Q4_K_M.gguf"));
+          console.log(chalk.gray("\nYou can also download manually into ~/.config/cascade-agent/models/:"));
+          console.log(chalk.gray("  curl -L -o ~/.config/cascade-agent/models/hf_unsloth_Qwen3.5-4B-Q4_K_M.gguf \\"));
+          console.log(chalk.gray("    https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf"));
           rl.close(); process.exit(1);
         }
       } else {

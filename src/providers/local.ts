@@ -26,7 +26,10 @@
 
 import { homedir } from "os";
 import { join } from "path";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, createWriteStream } from "fs";
+import { rename, unlink } from "fs/promises";
+import { Readable, PassThrough } from "stream";
+import { pipeline } from "stream/promises";
 import OpenAI from "openai";
 import { tools as builtinTools, executeTool, type ToolInput } from "../tools.js";
 import type { CanonicalTool } from "../tools.js";
@@ -51,7 +54,7 @@ export interface LocalModelInfo {
   displayName: string;
   repo: string;
   file: string;
-  /** Expected on-disk filename after node-llama-cpp downloader (adds hf_<org>_ prefix) */
+  /** On-disk filename the downloader writes (hf_<org>_ prefix, the historical layout) */
   filename: string;
   sizeGb: string;
   accuracy: string;
@@ -519,14 +522,19 @@ export interface DownloadProgress {
   percent: number;
 }
 
+/** Resolve the HuggingFace download URL for a model variant's GGUF. */
+export function modelDownloadUrl(info: LocalModelInfo): string {
+  return `https://huggingface.co/${info.repo}/resolve/main/${encodeURIComponent(info.file)}`;
+}
+
 /**
- * Download a local Qwen model to MODELS_DIR.
- * Uses node-llama-cpp's built-in createModelDownloader which handles
- * HuggingFace URLs, resumable downloads, and checksum verification.
+ * Download a local Qwen model to MODELS_DIR with a plain streaming fetch.
  *
- * NOTE: this is the LAST remaining node-llama-cpp usage; Slice C of the local-
- * inference consolidation replaces it with a plain fetch/stream downloader and
- * removes the dependency entirely.
+ * Replaces node-llama-cpp's createModelDownloader (removed in the 2026-07-03
+ * consolidation, Slice C): streams the GGUF from HuggingFace to a `.part` file,
+ * reports progress, and atomically renames into place on success (so a partial
+ * download is never mistaken for a complete model). No native dependency, so the
+ * published npm package installs clean without a build step.
  *
  * @param variant     "4b" (recommended) or "2b" — defaults to DEFAULT_LOCAL_MODEL_VARIANT
  * @param onProgress  Optional callback for progress updates
@@ -536,42 +544,57 @@ export async function downloadLocalModel(
   variant: LocalModelVariant = DEFAULT_LOCAL_MODEL_VARIANT,
   onProgress?: (progress: DownloadProgress) => void
 ): Promise<string> {
-  let nodeLlamaCpp: typeof import("node-llama-cpp");
-  try {
-    nodeLlamaCpp = await import("node-llama-cpp");
-  } catch {
-    throw new Error("node-llama-cpp is not installed. Run: npm install node-llama-cpp");
-  }
-
   mkdirSync(MODELS_DIR, { recursive: true });
 
   const info = LOCAL_MODELS[variant];
 
-  // Check for either the downloader-prefixed filename or the plain filename (manual downloads)
+  // Already present? Accept either the hf_-prefixed name (this downloader's
+  // output) or the plain filename (a manual download).
   const prefixedPath = join(MODELS_DIR, info.filename);
   const plainPath    = join(MODELS_DIR, info.file);
   if (existsSync(prefixedPath)) return prefixedPath;
   if (existsSync(plainPath))    return plainPath;
 
-  const { createModelDownloader } = nodeLlamaCpp;
-  const downloader = await createModelDownloader({
-    modelUri: `hf:${info.repo}/${info.file}`,
-    dirPath: MODELS_DIR,
-    onProgress: onProgress
-      ? ({ downloadedSize, totalSize }: { downloadedSize: number; totalSize: number }) => {
-          onProgress({
-            downloaded: downloadedSize,
-            total: totalSize,
-            percent: totalSize > 0 ? (downloadedSize / totalSize) * 100 : 0,
-          });
-        }
-      : undefined,
+  await downloadToFile(modelDownloadUrl(info), prefixedPath, onProgress);
+  return prefixedPath;
+}
+
+/**
+ * Stream a URL to `dest` via a temp `.part` file + atomic rename. Progress is
+ * reported from Content-Length (0 when the server omits it). A partial file is
+ * cleaned up on failure so it can never be mistaken for a finished model.
+ */
+export async function downloadToFile(
+  url: string,
+  dest: string,
+  onProgress?: (progress: DownloadProgress) => void,
+): Promise<void> {
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok || !res.body) {
+    throw new Error(`Model download failed: HTTP ${res.status} ${res.statusText} for ${url}`);
+  }
+  const total = Number(res.headers.get("content-length") ?? 0);
+  const tmp = `${dest}.part`;
+
+  // A PassThrough counts bytes as they flow; pipeline() owns backpressure + errors.
+  let downloaded = 0;
+  const counter = new PassThrough();
+  counter.on("data", (chunk: Buffer) => {
+    downloaded += chunk.length;
+    onProgress?.({
+      downloaded,
+      total,
+      percent: total > 0 ? (downloaded / total) * 100 : 0,
+    });
   });
 
-  await downloader.download();
-  // entrypointFilename contains the actual on-disk name (includes hf_<org>_ prefix)
-  const fileName = (downloader as unknown as { entrypointFilename?: string }).entrypointFilename ?? info.filename;
-  return join(MODELS_DIR, fileName);
+  try {
+    await pipeline(Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]), counter, createWriteStream(tmp));
+    await rename(tmp, dest);
+  } catch (err) {
+    await unlink(tmp).catch(() => { /* best effort */ });
+    throw err;
+  }
 }
 
 /** @deprecated Use downloadLocalModel("4b") instead. Kept for backwards compatibility. */

@@ -1,11 +1,13 @@
 # CI test gate (2026-07-03): this repo previously had NO CI, which is how the
 # stale Ollama-era document-intelligence suite masked `npm test` failures from
-# March to July. Runs the build + the 6 live suites (60 tests: extraction
-# pipeline, serve, review, trusted-endpoint, gateway, literature).
+# March to July. Runs the build + the live suites (document-intelligence,
+# download, extraction pipeline, serve, review, trusted-endpoint, gateway,
+# literature).
 #
-# Full npm ci (NOT --omit=optional): tsc type-resolves the optional deps
-# (node-llama-cpp, bonjour-service) even though their imports are dynamic, so
-# the build needs them installed. Prebuilt binaries make this download-only.
+# `npm ci --omit=optional` (Slice C): the local-inference consolidation removed
+# node-llama-cpp, and the last optionalDependency (bonjour-service) has a build-
+# safe dynamic import, so the package now builds + tests with NO optional deps and
+# NO native build step. This job proves that clean-install path.
 name: tests
 
 on:
@@ -22,6 +24,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --omit=optional
       - run: npm run build
       - run: npm test
