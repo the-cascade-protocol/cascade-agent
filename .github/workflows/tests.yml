@@ -1,0 +1,26 @@
+# CI test gate (2026-07-03): this repo previously had NO CI, which is how the
+# stale Ollama-era document-intelligence suite masked `npm test` failures from
+# March to July. Runs the build + the 6 live suites (60 tests: extraction
+# pipeline, serve, review, trusted-endpoint, gateway, literature).
+#
+# --omit=optional skips node-llama-cpp (native, large): no live suite loads a
+# model, and bonjour-service is behind a dynamic import with a runtime fallback.
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=optional
+      - run: npm run build
+      - run: npm test
