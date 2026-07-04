@@ -18,6 +18,66 @@ import type {
   CompleteOptions,
 } from "./types.js";
 
+/**
+ * Thrown by `complete()` when an otherwise-successful (HTTP 200) response
+ * carries no visible text — an empty or whitespace-only message body.
+ *
+ * This is the distinct, catchable signal that separates "the model said
+ * nothing" from "the model returned empty on purpose." Reasoning tiers
+ * (gemini-3-flash-preview; Qwen thinking) can burn the entire `max_tokens`
+ * budget on hidden reasoning and hand back `content === ""` with a
+ * `finish_reason` of `length` — a failure that previously slipped through as
+ * a valid empty string and was then treated as a real (empty) result by a
+ * downstream parser. Throwing here forces callers to fail loud.
+ */
+export class EmptyCompletionError extends Error {
+  /** The provider's stated stop reason (e.g. "length", "stop"), if any. */
+  readonly finishReason: string | null;
+  /** The `max_tokens` cap requested for this call, if one was set. */
+  readonly maxTokens?: number;
+  /** The model that produced the empty body. */
+  readonly model: string;
+  /** The backend that served the request. */
+  readonly provider: ProviderName;
+  /** True when the stop reason indicates the token budget was exhausted. */
+  readonly truncated: boolean;
+
+  constructor(details: {
+    finishReason: string | null;
+    maxTokens?: number;
+    model: string;
+    provider: ProviderName;
+  }) {
+    // Treat both the OpenAI (`length`) and generic (`max_tokens`) truncation
+    // signals as budget exhaustion.
+    const truncated =
+      details.finishReason === "length" ||
+      details.finishReason === "max_tokens";
+    const budget =
+      details.maxTokens !== undefined
+        ? `max_tokens=${details.maxTokens}`
+        : "the configured max_tokens";
+    const head =
+      `Model ${details.provider}/${details.model} returned an empty completion ` +
+      `(finish_reason=${details.finishReason ?? "unknown"}).`;
+    const hint = truncated
+      ? ` The token budget (${budget}) was likely exhausted by hidden reasoning ` +
+        `tokens before any visible content was produced. Raise max_tokens for ` +
+        `this call so the model has room to answer after it finishes reasoning.`
+      : ` The response body was empty or whitespace-only on an otherwise-successful ` +
+        `response, which usually means the model produced no answer. On a reasoning ` +
+        `tier this is often silent budget exhaustion; try raising max_tokens ` +
+        `(${budget}).`;
+    super(head + hint);
+    this.name = "EmptyCompletionError";
+    this.finishReason = details.finishReason;
+    this.maxTokens = details.maxTokens;
+    this.model = details.model;
+    this.provider = details.provider;
+    this.truncated = truncated;
+  }
+}
+
 // Convert canonical tool definitions to OpenAI function-calling format.
 function toOpenAITools(allTools: CanonicalTool[]): OpenAI.ChatCompletionTool[] {
   return allTools.map((t) => ({
@@ -94,7 +154,25 @@ export class OpenAICompatProvider implements Provider {
       },
       opts.signal ? { signal: opts.signal } : undefined
     );
-    return res.choices[0]?.message?.content ?? "";
+    const choice = res.choices[0];
+    const content = choice?.message?.content ?? "";
+
+    // Detect a successful (200) response whose assembled text is empty or
+    // whitespace-only. Returning "" here would let a downstream parser treat
+    // "the model said nothing" as a valid empty result — the exact silent
+    // failure that has bitten the Workbench (skeptic starvation, Ledger
+    // extraction truncation, literature synthesis/stance starvation). Fail
+    // loud with a typed, catchable error instead. See EmptyCompletionError.
+    if (content.trim() === "") {
+      throw new EmptyCompletionError({
+        finishReason: choice?.finish_reason ?? null,
+        maxTokens: opts.maxTokens,
+        model: this.model,
+        provider: this.providerName,
+      });
+    }
+
+    return content;
   }
 
   async listModels(): Promise<string[]> {
