@@ -280,15 +280,43 @@ export async function completeViaGateway(
     launchStage: tierInfo.launchStage,
     modelTier: tier,
     ...(req.egress?.surface ? { surface: req.egress.surface } : {}),
+    // Optimistic pre-send outcome. Written BEFORE the call (write-before-send);
+    // if the call then fails we append a failed-in-flight reconciliation line
+    // below so the ledger never reads a failed attempt as a confirmed egress.
+    outcome: "sent",
   };
   writeLedger(entry, logPath);
 
-  // 6. Dial the provider.
-  const text = await provider.complete(req.prompt, {
-    system: req.system,
-    temperature: req.temperature,
-    maxTokens: req.maxTokens,
-  });
+  // 6. Dial the provider. On failure, reconcile the optimistic "sent" line with
+  //    a metadata-only failure record (append-only JSONL) so a send that never
+  //    completed is distinguishable from a real egress. The reconciliation line
+  //    reuses the redacted entry (NO PHI or response content) and must never
+  //    mask the provider error the caller needs to see.
+  let text: string;
+  try {
+    text = await provider.complete(req.prompt, {
+      system: req.system,
+      temperature: req.temperature,
+      maxTokens: req.maxTokens,
+    });
+  } catch (err) {
+    const failureEntry: EgressLogEntry = {
+      ...entry,
+      timestamp: now().toISOString(),
+      outcome: "failed-in-flight",
+    };
+    try {
+      writeLedger(failureEntry, logPath);
+    } catch (reconErr) {
+      // A lost reconciliation line must not replace the provider error; surface
+      // it and re-throw the original failure.
+      const m = reconErr instanceof Error ? reconErr.message : String(reconErr);
+      process.stderr.write(
+        `Warning: failed to append egress failure reconciliation at ${logPath}: ${m}\n`
+      );
+    }
+    throw err;
+  }
 
   return {
     text,

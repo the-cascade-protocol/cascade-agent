@@ -266,6 +266,71 @@ async function main(): Promise<void> {
     assert.strictEqual(VERTEX_TIER_MODELS["flash-max"].launchStage, "GA");
   });
 
+  await test("a successful call leaves a single ledger entry marked outcome=sent", async () => {
+    const okPod = join(tmp, "pod-ok");
+    const res = await completeViaGateway(
+      baseRequest({ egress: { podDir: okPod, surface: "ledger" } }),
+      { makeProvider: () => new FakeProvider() }
+    );
+    assert.strictEqual(res.text, "fake-reply");
+    const entries = readEgressLog(podEgressLogPath(okPod));
+    assert.strictEqual(entries.length, 1, "a successful call writes exactly one line");
+    assert.strictEqual(entries[0]!.outcome, "sent");
+  });
+
+  await test("a failed provider call appends a distinguishable failed-in-flight record; no PHI leaks", async () => {
+    const failPod = join(tmp, "pod-fail");
+    class FailingProvider extends FakeProvider {
+      override async complete(): Promise<string> {
+        throw new Error("PROVIDER-502-MARKER simulated Vertex auth failure");
+      }
+    }
+    await assert.rejects(
+      completeViaGateway(
+        baseRequest({ egress: { podDir: failPod, surface: "ledger" } }),
+        { makeProvider: () => new FailingProvider() }
+      ),
+      /PROVIDER-502-MARKER/
+    );
+
+    const logPath = podEgressLogPath(failPod);
+    const raw = readFileSync(logPath, "utf-8");
+    // Neither the optimistic pre-send line nor the reconciliation line may carry
+    // PHI, response content, or the provider error detail.
+    assert.ok(!raw.includes("SYNTHETIC-PHI-MARKER"), "prompt content leaked into ledger");
+    assert.ok(!raw.includes("SYNTHETIC-SYSTEM-MARKER"), "system content leaked into ledger");
+    assert.ok(!raw.includes("potassium"), "record values leaked into ledger");
+    assert.ok(!raw.includes("PROVIDER-502-MARKER"), "provider error detail leaked into ledger");
+
+    const entries = readEgressLog(logPath);
+    assert.strictEqual(entries.length, 2, "write-before-send line + failure reconciliation line");
+    assert.strictEqual(entries[0]!.outcome, "sent", "pre-send line is optimistic sent");
+    assert.strictEqual(
+      entries[1]!.outcome,
+      "failed-in-flight",
+      "a dialed-then-thrown call is reconciled as failed-in-flight, not a confirmed egress"
+    );
+    // The reconciliation line preserves the redacted metadata so the two lines
+    // correlate, and it stays metadata-only.
+    assert.strictEqual(entries[1]!.endpoint, entries[0]!.endpoint);
+    assert.strictEqual(entries[1]!.model, entries[0]!.model);
+    assert.strictEqual(entries[1]!.summary.contentBytes, entries[0]!.summary.contentBytes);
+  });
+
+  await test("a failed audit write on the pre-send line still aborts the call (fail-closed preserved)", async () => {
+    const provider = new FakeProvider();
+    await assert.rejects(
+      completeViaGateway(baseRequest(), {
+        makeProvider: () => provider,
+        writeLedger: () => {
+          throw new Error("disk full");
+        },
+      }),
+      /disk full/
+    );
+    assert.strictEqual(provider.calls.length, 0, "provider must not be dialed when the audit line fails");
+  });
+
   rmSync(tmp, { recursive: true, force: true });
 
   console.log(`\n  ${passed} passed, ${failed} failed\n`);

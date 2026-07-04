@@ -627,10 +627,28 @@ loadQueue();
 
 // ── Serve command ──────────────────────────────────────────────────────────────
 
+/**
+ * Whether `serve` should advertise itself on the LAN via Bonjour/mDNS.
+ *
+ * OFF by default: this sidecar binds 127.0.0.1 only, so broadcasting its
+ * presence on the local network is an unnecessary privacy signal for a
+ * health-data app. Opt in explicitly with the `--advertise` flag or
+ * `CASCADE_AGENT_ADVERTISE=1`.
+ */
+export function shouldAdvertise(
+  advertiseFlag = false,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  if (advertiseFlag) return true;
+  const v = env.CASCADE_AGENT_ADVERTISE;
+  return v === '1' || v === 'true';
+}
+
 export async function runServeMode(
   port: number = DEFAULT_PORT,
   webReview = false,
-  exitWithParent = false
+  exitWithParent = false,
+  advertise = false
 ): Promise<void> {
   if (exitWithParent) {
     // Orphan guard: the host app spawns us with a piped stdin it never writes
@@ -917,19 +935,24 @@ export async function runServeMode(
 
   // ── Bonjour ──────────────────────────────────────────────────────────────────
 
-  try {
-    // bonjour-service is an optionalDependency; the `: string` specifier keeps tsc
-    // from statically resolving it so the build (and `npm ci --omit=optional`)
-    // succeed without the package installed.
-    const bonjourSpecifier: string = 'bonjour-service';
-    const mod = await import(bonjourSpecifier) as {
-      Bonjour: new () => { publish(opts: { name: string; type: string; port: number }): void };
-    };
-    const bonjour = new mod.Bonjour();
-    bonjour.publish({ name: 'Cascade Agent', type: 'cascade-agent', port });
-    console.error(`[cascade-agent] Bonjour: advertising _cascade-agent._tcp on port ${port}`);
-  } catch {
-    console.error('[cascade-agent] Bonjour not available (install bonjour-service for LAN discovery)');
+  // OFF by default. This sidecar binds 127.0.0.1 only, so broadcasting its
+  // presence on the LAN via mDNS is an unnecessary privacy signal for a
+  // health-data app. Opt in with `serve --advertise` or CASCADE_AGENT_ADVERTISE=1.
+  if (shouldAdvertise(advertise)) {
+    try {
+      // bonjour-service is an optionalDependency; the `: string` specifier keeps tsc
+      // from statically resolving it so the build (and `npm ci --omit=optional`)
+      // succeed without the package installed.
+      const bonjourSpecifier: string = 'bonjour-service';
+      const mod = await import(bonjourSpecifier) as {
+        Bonjour: new () => { publish(opts: { name: string; type: string; port: number }): void };
+      };
+      const bonjour = new mod.Bonjour();
+      bonjour.publish({ name: 'Cascade Agent', type: 'cascade-agent', port });
+      console.error(`[cascade-agent] Bonjour: advertising _cascade-agent._tcp on port ${port}`);
+    } catch {
+      console.error('[cascade-agent] Bonjour not available (install bonjour-service for LAN discovery)');
+    }
   }
 
   console.error(`[cascade-agent] serve mode: http://127.0.0.1:${port}`);
