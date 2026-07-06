@@ -104,6 +104,24 @@ export interface EgressLogEntry {
   modelTier?: string;
   /** Which app surface initiated the call (e.g. "ledger", "cloud-agent"). */
   surface?: string;
+  /**
+   * The reconciled result of the send attempt. ADDITIVE and OPTIONAL: a writer
+   * may omit it and legacy readers stay valid (absent reads as "unknown", the
+   * pre-outcome behavior).
+   *  - "sent": the optimistic pre-send record. A "sent" line that is NOT later
+   *    reconciled by a "failed-*" line for the same attempt represents a
+   *    completed egress.
+   *  - "failed-in-flight": the provider call was dialed and then threw. The
+   *    payload fate is unknown, so the attempt must NOT be read as a confirmed
+   *    egress.
+   *  - "failed-before-send": reserved for a failure that occurs before the
+   *    network dial is attempted (no bytes left the box).
+   *
+   * On a failed send the gateway APPENDS a second metadata-only line carrying a
+   * failed outcome (append-only JSONL reconciliation); it never rewrites the
+   * original line. No PHI or response content is ever recorded on either line.
+   */
+  outcome?: "sent" | "failed-before-send" | "failed-in-flight";
 }
 
 /** PHI-free shape descriptor of an outbound payload. */

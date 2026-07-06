@@ -4,6 +4,7 @@
  */
 import assert from 'assert';
 import { Hono } from 'hono';
+import { shouldAdvertise } from '../commands/serve.js';
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -161,6 +162,28 @@ await test('returns model list with recommendedModels array', async () => {
   const body = await res.json() as Record<string, unknown>;
   assert.ok(Array.isArray(body['recommendedModels']));
   assert.ok((body['recommendedModels'] as unknown[]).length >= 2);
+});
+
+console.log('\nBonjour advertise gate (privacy: opt-in)\n');
+
+await test('shouldAdvertise is OFF by default (no flag, no env)', () => {
+  assert.strictEqual(shouldAdvertise(false, {}), false);
+  assert.strictEqual(shouldAdvertise(undefined, {}), false);
+});
+
+await test('shouldAdvertise is ON when the --advertise flag is set', () => {
+  assert.strictEqual(shouldAdvertise(true, {}), true);
+});
+
+await test('shouldAdvertise is ON via CASCADE_AGENT_ADVERTISE=1 or =true', () => {
+  assert.strictEqual(shouldAdvertise(false, { CASCADE_AGENT_ADVERTISE: '1' }), true);
+  assert.strictEqual(shouldAdvertise(false, { CASCADE_AGENT_ADVERTISE: 'true' }), true);
+});
+
+await test('shouldAdvertise stays OFF for other env values (0, empty, arbitrary)', () => {
+  assert.strictEqual(shouldAdvertise(false, { CASCADE_AGENT_ADVERTISE: '0' }), false);
+  assert.strictEqual(shouldAdvertise(false, { CASCADE_AGENT_ADVERTISE: '' }), false);
+  assert.strictEqual(shouldAdvertise(false, { CASCADE_AGENT_ADVERTISE: 'yes' }), false);
 });
 
 // ── Summary ───────────────────────────────────────────────────────────────────

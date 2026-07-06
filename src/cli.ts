@@ -425,9 +425,13 @@ program
     "--exit-with-parent",
     "Exit when stdin reaches EOF. For host apps that spawn serve as a sidecar with a piped stdin; do not combine with a null/closed stdin."
   )
-  .action(async (opts: { port?: string; webReview?: boolean; exitWithParent?: boolean }) => {
+  .option(
+    "--advertise",
+    "Advertise this server on the local network via Bonjour/mDNS (default: off). This sidecar binds 127.0.0.1 only, so LAN broadcast is opt-in. Also enabled by CASCADE_AGENT_ADVERTISE=1."
+  )
+  .action(async (opts: { port?: string; webReview?: boolean; exitWithParent?: boolean; advertise?: boolean }) => {
     const port = parseInt(opts.port ?? "8765", 10);
-    await runServeMode(port, opts.webReview ?? false, opts.exitWithParent ?? false);
+    await runServeMode(port, opts.webReview ?? false, opts.exitWithParent ?? false, opts.advertise ?? false);
   });
 
 // ── cascade-agent review ───────────────────────────────────────────────────
