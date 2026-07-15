@@ -68,6 +68,10 @@ AI Extraction: AIExtractionActivity, AIDiscardedExtraction, SocialHistoryConsent
   coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.3 — insurance, claims)
   pots:     https://ns.cascadeprotocol.org/pots/v1#     (v1.4 — POTS screening)
   checkup:  https://ns.cascadeprotocol.org/checkup/v1#  (v3.2 — patient-facing summaries)
+  workbench: https://ns.cascadeprotocol.org/workbench/v1# (v1-draft — Workbench app objects; notes/ Web Annotation substrate, record overlays, filing labels)
+  evidence:  https://ns.cascadeprotocol.org/evidence/v1#  (v1-draft — assertion grounding facets: direction / basis / strength / settled / reason / confidence)
+  oa:        http://www.w3.org/ns/oa#                     (external, W3C Web Annotation — notes/ substrate: oa:Annotation + oa:motivatedBy)
+  ical:      http://www.w3.org/2002/12/cal/ical#          (external, W3C RDF Calendar — follow-up ical:status / ical:due on cal:Vtodo)
 
 ### MCP Server (for AI agents)
     cascade serve --mcp
@@ -295,7 +299,37 @@ Tool selection rule:
       cascade pod query <pod> --clinical-social-history --json | jq '.dataTypes["clinical-social-history"].records[]
         | {category: .properties["clinical:socialHistoryCategory"],
            smoking: .properties["health:smokingStatus"],
-           packs: .properties["clinical:packsPerYear"]}'`;
+           packs: .properties["clinical:packsPerYear"]}'
+  • Workbench v1-draft.0.5: notes/ container (oa:Annotation substrate). Caregiver notes,
+      "needs research" flags, and follow-ups are ONE oa:Annotation artifact in a top-level notes/
+      container, distinguished by oa:motivatedBy: oa:commenting (caregiver note), oa:questioning
+      (research flag), workbench:followUp (follow-up / open loop). Attribution is REQUIRED
+      (prov:wasAttributedTo, the caregiver, distinct from the patient and from any agent; plus
+      prov:generatedAtTime); body text is an oa:TextualBody (rdf:value carries the text). A follow-up
+      is ADDITIONALLY typed cal:Vtodo and carries ical:status (RFC 5545 VTODO enum: NEEDS-ACTION |
+      IN-PROCESS | COMPLETED | CANCELLED) plus optional ical:due. Notes live in the top-level notes/
+      container, separate from the annotations/ record-amendment overlays. Filter notes by motivation
+      and read a follow-up's status:
+      cascade pod query <pod> --notes --json | jq '.dataTypes["notes"].records[]
+        | select(.properties["oa:motivatedBy"] == "workbench:followUp")
+        | {target: .properties["oa:hasTarget"], status: .properties["ical:status"],
+           due: .properties["ical:due"], by: .properties["prov:wasAttributedTo"]}'
+  • Evidence v1-draft.0.2: evidence:Assertion grounding facets (these REPLACE the flat, now-deprecated
+      evidence:verdict). A checkable statement's grounding outcome is expressed as orthogonal facets on
+      the evidence:Assertion: evidence:direction (Supports | Contradicts | Mixed | None), evidence:basis
+      (Record | Literature | RecordAndLiterature | None), evidence:strength (Strong | Moderate | Weak),
+      evidence:settled (Settled | NeedsEvidence), evidence:reason (NoRecord | NeedsLiterature |
+      NotCheckableByNature), evidence:confidence (decimal 0.0-1.0). A NeedsEvidence assertion carries
+      direction None; evidence:reason says why it is not settled. Surface unsettled assertions:
+      cascade pod query <pod> --assertions --json | jq '[.dataTypes["assertions"].records[]
+        | select(.properties["evidence:settled"] == "evidence:NeedsEvidence")
+        | {text: .properties["evidence:assertionText"], reason: .properties["evidence:reason"],
+           direction: .properties["evidence:direction"], basis: .properties["evidence:basis"]}]'
+  • Workbench v1-draft.0.4: workbench:userSourceLabel is the user's chosen FILING label for a record's
+      source (the organization axis), folded as a workbench:Annotation overlay (annotationProperty =
+      "workbench:userSourceLabel", annotationValue = the label). It does NOT overwrite the imported
+      clinical:sourceEHR, which is preserved and shown alongside; the effective grouping source prefers
+      this label when present, else falls back to clinical:sourceEHR.`;
 
 let _capabilities: string | undefined;
 let _podContext: string | undefined;

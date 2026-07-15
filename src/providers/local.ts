@@ -449,6 +449,8 @@ ALWAYS use the full absolute pod path in cascade commands:
   clinical: https://ns.cascadeprotocol.org/clinical/v1# (EHR records, encounters, social history)
   coverage: https://ns.cascadeprotocol.org/coverage/v1# (insurance, claims)
   core:     https://ns.cascadeprotocol.org/core/v1#     (identity, provenance)
+  workbench: https://ns.cascadeprotocol.org/workbench/v1# (v1-draft: Workbench notes/ substrate, record overlays, filing labels)
+  evidence:  https://ns.cascadeprotocol.org/evidence/v1#  (v1-draft: assertion grounding facets: direction/basis/strength/settled)
 
 ## Key Fields by Type
 
