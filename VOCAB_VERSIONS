@@ -8,6 +8,10 @@
 #   cascade:AdvisoryApplicationActivity, cascade:GenerationTrigger (from v3.1/3.2).
 # clinical 1.9 (2026-06-17): shapes-only — cascade:AIExtracted is now a valid
 #   cascade:dataProvenance value on clinical records.
+# 2026-07-15 batched draft sync: taught the system prompt the notes/ oa:Annotation
+#   container (workbench v1-draft.0.5), the evidence facet model (evidence v1-draft.0.2),
+#   and workbench:userSourceLabel (v1-draft.0.4). Per D-PATH, drafts stay unrowed until
+#   v1.0 graduation; no version row change.
 core=3.3
 health=2.4
 clinical=1.9
