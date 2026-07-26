@@ -117,11 +117,52 @@ export interface EgressLogEntry {
    *  - "failed-before-send": reserved for a failure that occurs before the
    *    network dial is attempted (no bytes left the box).
    *
+   *  - "relay-attested": the SECOND line of a two-hop Cascade relay call
+   *    (D-RMA-25). Not a second egress: it re-states the same attempt and adds
+   *    what the relay reported about the upstream that served it. Readers fold
+   *    it into the "sent" line it matches; a reader that does not understand it
+   *    must not count it as another send.
+   *
    * On a failed send the gateway APPENDS a second metadata-only line carrying a
    * failed outcome (append-only JSONL reconciliation); it never rewrites the
    * original line. No PHI or response content is ever recorded on either line.
    */
-  outcome?: "sent" | "failed-before-send" | "failed-in-flight";
+  outcome?: "sent" | "failed-before-send" | "failed-in-flight" | "relay-attested";
+  /**
+   * How the destination facts on THIS line are known (D-RMA-25). The ledger
+   * never blurs proof into testimony:
+   *
+   *  - "app-verified": the app itself dialed this endpoint and can prove it.
+   *    Every pre-send line is app-verified, including the relay hop.
+   *  - "relay-reported": the relay's account of what happened after the app's
+   *    hop ended. Recorded because it is useful, marked because it is quoted.
+   *
+   * Absent on every line written before the relay existed, which readers go on
+   * reading exactly as they did before the field.
+   */
+  upstreamAttestation?: "app-verified" | "relay-reported";
+  /**
+   * The relay's report of the upstream that served the request (D-RMA-26).
+   * Present ONLY on a "relay-attested" line, and ONLY from response headers —
+   * never inferred from the tier, the model id, or anything else the client
+   * happens to believe.
+   *
+   * `provider` is a display string the relay supplies (D-RMA-41); the client
+   * has no hardcoded provider display name to fall back to.
+   */
+  upstream?: {
+    provider?: string;
+    model?: string;
+    endpoint?: string;
+    region?: string;
+    launchStage?: string;
+  };
+  /**
+   * Set when this call was answered on the LOCAL model after the cloud path
+   * failed (D-RMA-5). The fallback is announced in the UI and marked here, so
+   * "cloud was unavailable" is auditable rather than invisible.
+   */
+  fallbackToLocal?: boolean;
 }
 
 /** PHI-free shape descriptor of an outbound payload. */

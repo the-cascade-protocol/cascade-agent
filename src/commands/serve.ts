@@ -17,6 +17,30 @@ import {
   type GatewayCompleteRequest,
 } from '../gateway.js';
 import {
+  RelayOutageError,
+  RelayRefusalError,
+} from '../relay/contract.js';
+import { fetchRelayStatus } from '../relay/status.js';
+
+/**
+ * The per-request device-token header ([ALPHA-MODEL-ACCESS], D-RMA-9).
+ *
+ * The token is custody of the Tauri shell's OS keychain. It arrives on each
+ * localhost request rather than living in this process's environment, for two
+ * reasons: the sidecar never holds a long-lived secret that a process listing
+ * could show, and a token added or revoked mid-session takes effect on the very
+ * next request with no sidecar restart. It is never logged and never written to
+ * the egress ledger.
+ */
+const DEVICE_TOKEN_HEADER = 'x-cascade-device-token';
+
+function readDeviceToken(c: { req: { header: (n: string) => string | undefined } }):
+  | string
+  | undefined {
+  const raw = c.req.header(DEVICE_TOKEN_HEADER);
+  return raw && raw.trim().length > 0 ? raw.trim() : undefined;
+}
+import {
   createLiteratureFetcher,
   literatureConfigFromEnv,
   loadLocalEnv,
@@ -762,8 +786,16 @@ export async function runServeMode(
     } catch {
       return c.json({ error: 'request body must be JSON' }, 400);
     }
+    // The device token rides the request header, never the body and never the
+    // environment. A body-supplied token is ignored so the renderer cannot
+    // smuggle one in: custody belongs to the Tauri keychain layer.
+    const deviceToken = readDeviceToken(c);
+    const routed: GatewayCompleteRequest = {
+      ...body,
+      ...(deviceToken !== undefined ? { deviceToken } : { deviceToken: undefined }),
+    };
     try {
-      const result = await completeViaGateway(body);
+      const result = await completeViaGateway(routed);
       return c.json(result);
     } catch (err) {
       if (err instanceof GatewayRequestError) {
@@ -774,10 +806,66 @@ export async function runServeMode(
           {
             error: err.message,
             endpoint: err.endpoint,
+            reason: err.reason,
             modelStage: err.modelStage,
           },
           403,
         );
+      }
+      // The relay REFUSED (D-RMA-17): a stated policy answer with a reason
+      // code, not a transport failure. 409 keeps it out of the 5xx band so no
+      // caller can mistake it for an outage and fall back to local as if the
+      // cloud were merely down.
+      if (err instanceof RelayRefusalError) {
+        return c.json(
+          {
+            error: err.message,
+            kind: 'relay-refusal',
+            reason: err.reason,
+            ...(err.retryAfterSeconds !== undefined
+              ? { retryAfterSeconds: err.retryAfterSeconds }
+              : {}),
+          },
+          409,
+        );
+      }
+      // The relay did not answer usefully (D-RMA-5). THIS is the class the app
+      // may fall back to local for, announced and marked, never silently.
+      if (err instanceof RelayOutageError) {
+        return c.json(
+          {
+            error: err.message,
+            kind: 'relay-outage',
+            ...(err.status !== undefined ? { upstreamStatus: err.status } : {}),
+          },
+          503,
+        );
+      }
+      return c.json({ error: String(err) }, 502);
+    }
+  });
+
+  // Relay entitlement status (D-RMA-11/22): the app's launch + 15-minute poll.
+  // Content-free by construction — it carries the device token and nothing
+  // else, and returns typed state plus any operator notice. 428 when no token
+  // is present, which is "cloud has not been turned on", not an error state.
+  app.get('/cloud/status', async (c) => {
+    const deviceToken = readDeviceToken(c);
+    if (!deviceToken) {
+      return c.json({ error: 'no device token', kind: 'no-device-token' }, 428);
+    }
+    try {
+      const status = await fetchRelayStatus({ deviceToken });
+      return c.json(status);
+    } catch (err) {
+      if (err instanceof RelayRefusalError) {
+        return c.json(
+          { error: err.message, kind: 'relay-refusal', reason: err.reason },
+          409,
+        );
+      }
+      if (err instanceof RelayOutageError) {
+        return c.json({ error: err.message, kind: 'relay-outage' }, 503);
       }
       return c.json({ error: String(err) }, 502);
     }

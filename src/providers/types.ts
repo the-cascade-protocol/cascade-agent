@@ -3,7 +3,19 @@ import type { CanonicalTool, ToolInput } from "../tools.js";
 // "vertex" = Google Vertex AI (regional aiplatform.googleapis.com, ADC auth,
 // BAA-covered / PHI-safe). DISTINCT from "google" (public AI Studio endpoint,
 // API-key auth, NOT BAA-covered). See providers/vertex.ts for the full rationale.
-export type ProviderName = "anthropic" | "openai" | "google" | "vertex" | "ollama" | "local";
+//
+// "cascade-relay" = the Cascade relay (relay.cascadeagenticlabs.com), the
+// tester path: a device token instead of ADC, and the relay resolves the tier
+// to a concrete upstream model it names in the response headers. See
+// providers/cascade-relay.ts.
+export type ProviderName =
+  | "anthropic"
+  | "openai"
+  | "google"
+  | "vertex"
+  | "cascade-relay"
+  | "ollama"
+  | "local";
 
 export interface SimpleMessage {
   role: "user" | "assistant";

@@ -110,12 +110,20 @@ export class OpenAICompatProvider implements Provider {
   private client: OpenAI;
   private apiKey: string;
 
+  /**
+   * @param fetchImpl  Optional transport override. The relay provider passes a
+   *                   wrapper that captures the upstream attestation response
+   *                   headers (D-RMA-26) and classifies a non-2xx as a typed
+   *                   refusal or outage before the SDK can retry it. Absent,
+   *                   the SDK uses the global fetch exactly as before.
+   */
   constructor(
     providerName: ProviderName,
     apiKey: string,
     model: string,
     baseURL?: string,
-    defaultHeaders?: Record<string, string>
+    defaultHeaders?: Record<string, string>,
+    fetchImpl?: typeof fetch
   ) {
     this.providerName = providerName;
     this.model = model;
@@ -124,6 +132,7 @@ export class OpenAICompatProvider implements Provider {
       apiKey,
       ...(baseURL ? { baseURL } : {}),
       ...(defaultHeaders ? { defaultHeaders } : {}),
+      ...(fetchImpl ? { fetch: fetchImpl } : {}),
     });
   }
 
