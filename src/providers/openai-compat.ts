@@ -111,11 +111,19 @@ export class OpenAICompatProvider implements Provider {
   private apiKey: string;
 
   /**
-   * @param fetchImpl  Optional transport override. The relay provider passes a
-   *                   wrapper that captures the upstream attestation response
-   *                   headers (D-RMA-26) and classifies a non-2xx as a typed
-   *                   refusal or outage before the SDK can retry it. Absent,
-   *                   the SDK uses the global fetch exactly as before.
+   * @param transport  Optional transport overrides.
+   *
+   *   `fetch` lets a caller wrap the request. The relay provider passes a
+   *   wrapper that captures the upstream attestation response headers
+   *   (D-RMA-26) and classifies a non-2xx as a typed refusal or outage.
+   *
+   *   `maxRetries` overrides the SDK's default (2). The relay passes 0: the
+   *   relay has already ANSWERED when it refuses, and re-sending a refused
+   *   request would burn a tester's daily cap against a decision that will not
+   *   change. Outages are handled by the app's fall back to local, not by a
+   *   silent retry loop.
+   *
+   * Absent, both behave exactly as they did before this parameter existed.
    */
   constructor(
     providerName: ProviderName,
@@ -123,7 +131,7 @@ export class OpenAICompatProvider implements Provider {
     model: string,
     baseURL?: string,
     defaultHeaders?: Record<string, string>,
-    fetchImpl?: typeof fetch
+    transport?: { fetch?: typeof fetch; maxRetries?: number }
   ) {
     this.providerName = providerName;
     this.model = model;
@@ -132,7 +140,10 @@ export class OpenAICompatProvider implements Provider {
       apiKey,
       ...(baseURL ? { baseURL } : {}),
       ...(defaultHeaders ? { defaultHeaders } : {}),
-      ...(fetchImpl ? { fetch: fetchImpl } : {}),
+      ...(transport?.fetch ? { fetch: transport.fetch } : {}),
+      ...(transport?.maxRetries !== undefined
+        ? { maxRetries: transport.maxRetries }
+        : {}),
     });
   }
 

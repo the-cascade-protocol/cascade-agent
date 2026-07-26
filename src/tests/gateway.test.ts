@@ -5,11 +5,12 @@
  * synthetic). They prove the load-bearing G-3 behavior:
  *  - the egress ledger entry is appended BEFORE the provider is dialed
  *  - the ledger entry carries counts/metadata only — never prompt content
- *  - PHI on a PREVIEW model throws (BAA excludes pre-GA), provider never dialed
+ *  - PHI on a model with no recorded BAA coverage throws (D-RMA-7), never dialed
  *  - PHI on a non-BAA endpoint throws, provider never dialed
  *  - containsPhi defaults to TRUE (fail closed)
- *  - de-identified payloads may use the preview flash tier
+ *  - a de-identified payload skips the gate entirely
  *  - a failed Pod-ledger append aborts the call (no egress without audit)
+ *  - THE NO-TOKEN PATH IS BYTE-IDENTICAL to gateway v1 (D-RMA-37)
  *
  * Run with: npx tsx src/tests/gateway.test.ts
  */
@@ -20,13 +21,19 @@ import { join } from "path";
 
 import {
   completeViaGateway,
+  assertBaaForPhi,
+  isBaaCoveredEndpoint,
   BaaViolationError,
   GatewayRequestError,
+  MODEL_TIERS,
   VERTEX_TIER_MODELS,
+  RETIRED_TIER_NAMES,
+  DEFAULT_MODEL_TIER,
   podEgressLogPath,
   type GatewayProvider,
   type GatewayCompleteRequest,
 } from "../gateway.js";
+import { CASCADE_RELAY_HOST } from "../relay/contract.js";
 import { readEgressLog } from "../providers/trusted-endpoint.js";
 
 // ── Test harness (mirrors trusted-endpoint.test.ts) ───────────────────────────
@@ -79,7 +86,7 @@ function baseRequest(overrides: Partial<GatewayCompleteRequest> = {}): GatewayCo
     prompt: SYNTHETIC_PHI_PROMPT,
     system: SYNTHETIC_SYSTEM,
     purpose: "assertion-grounding",
-    modelTier: "flash-lite",
+    modelTier: "standard",
     containsPhi: true,
     egress: { surface: "ledger", manifestRecordCount: 2, manifestAssertionCount: 1 },
     ...overrides,
@@ -119,6 +126,8 @@ async function main(): Promise<void> {
     assert.strictEqual(res.text, "fake-reply");
     assert.strictEqual(res.model, "gemini-3.1-flash-lite");
     assert.strictEqual(res.launchStage, "GA");
+    assert.strictEqual(res.provider, "vertex", "no device token means the ADC path");
+    assert.strictEqual(res.upstream, undefined, "the ADC path has no relay to quote");
   });
 
   await test("ledger entry holds metadata only — no prompt/system content leaks", async () => {
@@ -143,7 +152,7 @@ async function main(): Promise<void> {
     assert.strictEqual(e.purpose, "assertion-grounding");
     assert.strictEqual(e.containsPhi, true);
     assert.strictEqual(e.launchStage, "GA");
-    assert.strictEqual(e.modelTier, "flash-lite");
+    assert.strictEqual(e.modelTier, "standard");
     assert.strictEqual(e.surface, "ledger");
     assert.strictEqual(e.summary.messageCount, 2);
     assert.strictEqual(e.summary.toolCount, 0);
@@ -153,13 +162,69 @@ async function main(): Promise<void> {
         Buffer.byteLength(SYNTHETIC_PHI_PROMPT, "utf-8"),
       "contentBytes accounts for the payload size"
     );
+    // D-RMA-37 / no-token byte identity: the ADC path's ledger line must carry
+    // NONE of the relay-only fields. A build with no device token writes exactly
+    // the line it wrote before the relay existed.
+    const parsed = JSON.parse(raw.trim().split("\n")[0]!) as Record<string, unknown>;
+    assert.ok(
+      !("upstreamAttestation" in parsed),
+      "the ADC line must not carry upstreamAttestation"
+    );
+    assert.ok(!("upstream" in parsed), "the ADC line must not carry upstream facts");
+    assert.deepStrictEqual(
+      Object.keys(parsed).sort(),
+      [
+        "containsPhi",
+        "direction",
+        "endpoint",
+        "launchStage",
+        "model",
+        "modelTier",
+        "outcome",
+        "provider",
+        "purpose",
+        "summary",
+        "surface",
+        "timestamp",
+      ],
+      "the no-token ledger line's field set is frozen"
+    );
   });
 
-  await test("PHI on the PREVIEW flash tier throws BaaViolationError; provider never dialed", async () => {
-    const provider = new FakeProvider();
+  await test("D-RMA-7: the gate runs on the coverage FACT, not the launch stage", () => {
+    // A GA model with no recorded coverage is blocked. GA-ness was only ever
+    // Google's proxy for coverage, and the proxy is not the thing.
+    assert.throws(
+      () =>
+        assertBaaForPhi(VERTEX_GLOBAL_ENDPOINT, {
+          baaCovered: false,
+          launchStage: "GA",
+        }),
+      (err: unknown) =>
+        err instanceof BaaViolationError && err.reason === "model-not-covered"
+    );
+    // A PREVIEW model that a provider DID cover would pass. Nothing in the
+    // shipped tier table is in that state today, and that is the point: the
+    // rule is coverage, and GA is a fact about one vendor's current policy.
+    assert.doesNotThrow(() =>
+      assertBaaForPhi(VERTEX_GLOBAL_ENDPOINT, {
+        baaCovered: true,
+        launchStage: "PREVIEW",
+      })
+    );
+    // Coverage cannot rescue an uncovered endpoint.
+    assert.throws(
+      () => assertBaaForPhi("https://api.openai.com/v1", { baaCovered: true }),
+      (err: unknown) =>
+        err instanceof BaaViolationError && err.reason === "endpoint-not-covered"
+    );
+  });
+
+  await test("blocked BAA attempts never reach the network and never write a ledger line", async () => {
+    const provider = new FakeProvider("https://api.openai.com/v1");
     let ledgerWrites = 0;
     await assert.rejects(
-      completeViaGateway(baseRequest({ modelTier: "flash" }), {
+      completeViaGateway(baseRequest(), {
         makeProvider: () => provider,
         writeLedger: () => {
           ledgerWrites++;
@@ -174,7 +239,7 @@ async function main(): Promise<void> {
   await test("PHI to a non-BAA endpoint throws, even on a GA model", async () => {
     const provider = new FakeProvider("https://api.openai.com/v1");
     await assert.rejects(
-      completeViaGateway(baseRequest({ modelTier: "flash-lite" }), {
+      completeViaGateway(baseRequest({ modelTier: "standard" }), {
         makeProvider: () => provider,
         writeLedger: () => {},
       }),
@@ -183,24 +248,24 @@ async function main(): Promise<void> {
     assert.strictEqual(provider.calls.length, 0);
   });
 
-  await test("containsPhi defaults to TRUE (fail closed): omitted + preview tier throws", async () => {
-    const provider = new FakeProvider();
-    const req = baseRequest({ modelTier: "flash" });
+  await test("containsPhi defaults to TRUE (fail closed): omitted + uncovered endpoint throws", async () => {
+    const provider = new FakeProvider("https://api.openai.com/v1");
+    const req = baseRequest();
     delete (req as { containsPhi?: boolean }).containsPhi;
     await assert.rejects(
       completeViaGateway(req, { makeProvider: () => provider, writeLedger: () => {} }),
       (err: unknown) => err instanceof BaaViolationError
     );
+    assert.strictEqual(provider.calls.length, 0);
   });
 
-  await test("a de-identified payload may use the preview flash tier", async () => {
-    const provider = new FakeProvider();
+  await test("a de-identified payload skips the gate and is still ledgered", async () => {
+    const provider = new FakeProvider("https://api.openai.com/v1");
     const loggedEntries: { containsPhi?: boolean; launchStage?: string }[] = [];
     const res = await completeViaGateway(
       baseRequest({
         prompt: "Does creatine supplementation interact with statin myopathy risk?",
         system: undefined,
-        modelTier: "flash",
         containsPhi: false,
         purpose: "literature-synthesis",
         egress: { surface: "ledger" },
@@ -212,12 +277,10 @@ async function main(): Promise<void> {
         },
       }
     );
-    assert.strictEqual(res.model, "gemini-3-flash-preview");
-    assert.strictEqual(res.launchStage, "PREVIEW");
+    assert.strictEqual(res.text, "fake-reply");
     assert.strictEqual(provider.calls.length, 1);
     assert.strictEqual(loggedEntries.length, 1, "the de-identified call is still ledgered");
     assert.strictEqual(loggedEntries[0]!.containsPhi, false);
-    assert.strictEqual(loggedEntries[0]!.launchStage, "PREVIEW");
   });
 
   await test("a failed ledger append aborts the call: no egress without audit", async () => {
@@ -250,20 +313,55 @@ async function main(): Promise<void> {
     );
     await assert.rejects(
       completeViaGateway(
-        baseRequest({ modelTier: "pro" as unknown as "flash" }),
+        baseRequest({ modelTier: "pro" as unknown as "standard" }),
         deps
       ),
       (e: unknown) => e instanceof GatewayRequestError
     );
+    // A RETIRED tier name is rejected with its replacement named, never
+    // silently aliased: a silent alias is how two repos drift apart while both
+    // still look healthy.
+    for (const [retired, replacement] of Object.entries(RETIRED_TIER_NAMES)) {
+      await assert.rejects(
+        completeViaGateway(
+          baseRequest({ modelTier: retired as unknown as "standard" }),
+          deps
+        ),
+        (e: unknown) =>
+          e instanceof GatewayRequestError && e.message.includes(replacement)
+      );
+    }
   });
 
-  await test("tier table matches the verified §4.1.1 model ids", () => {
-    assert.strictEqual(VERTEX_TIER_MODELS["flash-lite"].model, "gemini-3.1-flash-lite");
-    assert.strictEqual(VERTEX_TIER_MODELS["flash-lite"].launchStage, "GA");
-    assert.strictEqual(VERTEX_TIER_MODELS["flash"].model, "gemini-3-flash-preview");
-    assert.strictEqual(VERTEX_TIER_MODELS["flash"].launchStage, "PREVIEW");
-    assert.strictEqual(VERTEX_TIER_MODELS["flash-max"].model, "gemini-3.5-flash");
-    assert.strictEqual(VERTEX_TIER_MODELS["flash-max"].launchStage, "GA");
+  await test("D-RMA-6: two neutral tiers, the preview tier is GONE, every row carries provenance", () => {
+    assert.deepStrictEqual([...MODEL_TIERS], ["standard", "advanced"]);
+    assert.strictEqual(DEFAULT_MODEL_TIER, "standard");
+    assert.strictEqual(VERTEX_TIER_MODELS.standard.model, "gemini-3.1-flash-lite");
+    assert.strictEqual(VERTEX_TIER_MODELS.standard.launchStage, "GA");
+    assert.strictEqual(VERTEX_TIER_MODELS.advanced.model, "gemini-3.5-flash");
+    assert.strictEqual(VERTEX_TIER_MODELS.advanced.launchStage, "GA");
+    // gemini-3-flash-preview is unreachable through the client enum entirely.
+    for (const tier of MODEL_TIERS) {
+      assert.notStrictEqual(VERTEX_TIER_MODELS[tier].model, "gemini-3-flash-preview");
+      // D-RMA-7's own stated mitigation: a coverage boolean a human sets is a
+      // load-bearing truth claim, so it must carry provenance or the gate
+      // degrades into a checkbox.
+      assert.strictEqual(VERTEX_TIER_MODELS[tier].baaCovered, true);
+      assert.ok(
+        (VERTEX_TIER_MODELS[tier].baaProvenance ?? "").length > 0,
+        `tier ${tier} claims BAA coverage with no provenance recorded`
+      );
+    }
+  });
+
+  await test("the canonical relay host is BAA-covered; a dev override is not", () => {
+    assert.ok(isBaaCoveredEndpoint(`https://${CASCADE_RELAY_HOST}/v1`));
+    assert.ok(isBaaCoveredEndpoint(VERTEX_GLOBAL_ENDPOINT));
+    // Pointing the app at a local relay stub must FAIL the PHI gate closed
+    // rather than quietly routing records through an unverified box.
+    assert.ok(!isBaaCoveredEndpoint("http://127.0.0.1:8899/v1"));
+    assert.ok(!isBaaCoveredEndpoint("https://relay.example.com/v1"));
+    assert.ok(!isBaaCoveredEndpoint("not-a-url"));
   });
 
   await test("a successful call leaves a single ledger entry marked outcome=sent", async () => {

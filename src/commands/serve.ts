@@ -32,13 +32,34 @@ import { fetchRelayStatus } from '../relay/status.js';
  * next request with no sidecar restart. It is never logged and never written to
  * the egress ledger.
  */
-const DEVICE_TOKEN_HEADER = 'x-cascade-device-token';
+export const DEVICE_TOKEN_HEADER = 'x-cascade-device-token';
 
 function readDeviceToken(c: { req: { header: (n: string) => string | undefined } }):
   | string
   | undefined {
-  const raw = c.req.header(DEVICE_TOKEN_HEADER);
+  return normalizeDeviceToken(c.req.header(DEVICE_TOKEN_HEADER));
+}
+
+/** Blank/whitespace header values are "no token", not an empty-string token. */
+export function normalizeDeviceToken(raw: string | undefined | null): string | undefined {
   return raw && raw.trim().length > 0 ? raw.trim() : undefined;
+}
+
+/**
+ * Bind the device token from the request HEADER onto a gateway request,
+ * overriding whatever the body said.
+ *
+ * The override is the point, not an accident: the body is renderer-authored,
+ * and letting a renderer-supplied token through would move custody out of the
+ * OS keychain and into the WebView. The header is set by the Tauri shell alone.
+ * Absent header means an explicit `undefined`, so a body-supplied token can
+ * never route a call through the relay.
+ */
+export function bindDeviceToken(
+  body: GatewayCompleteRequest,
+  headerValue: string | undefined | null,
+): GatewayCompleteRequest {
+  return { ...body, deviceToken: normalizeDeviceToken(headerValue) };
 }
 import {
   createLiteratureFetcher,
@@ -789,11 +810,7 @@ export async function runServeMode(
     // The device token rides the request header, never the body and never the
     // environment. A body-supplied token is ignored so the renderer cannot
     // smuggle one in: custody belongs to the Tauri keychain layer.
-    const deviceToken = readDeviceToken(c);
-    const routed: GatewayCompleteRequest = {
-      ...body,
-      ...(deviceToken !== undefined ? { deviceToken } : { deviceToken: undefined }),
-    };
+    const routed = bindDeviceToken(body, c.req.header(DEVICE_TOKEN_HEADER));
     try {
       const result = await completeViaGateway(routed);
       return c.json(result);

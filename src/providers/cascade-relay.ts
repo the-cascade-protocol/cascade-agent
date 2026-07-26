@@ -70,6 +70,15 @@ export class CascadeRelayProvider implements Provider, DescribesEndpoint {
   readonly baseUrl: string;
   private readonly options: CascadeRelayOptions;
   private attestation: RelayUpstreamAttestation | null = null;
+  /**
+   * The typed classification of the most recent transport failure. The OpenAI
+   * SDK catches anything a custom `fetch` throws and re-wraps it as a generic
+   * `APIConnectionError`, which would flatten "the relay refused because your
+   * daily cap is used up" into "connection error" — the exact silent
+   * degradation D-RMA-5 exists to prevent. So the wrapper parks its verdict
+   * here and the call sites re-throw it in place of the SDK's wrapper.
+   */
+  private pendingFailure: Error | null = null;
 
   constructor(options: CascadeRelayOptions) {
     this.options = options;
@@ -103,6 +112,10 @@ export class CascadeRelayProvider implements Provider, DescribesEndpoint {
    */
   private wrappedFetch(): typeof fetch {
     const base = this.options.fetchImpl ?? fetch;
+    const fail = (err: Error): never => {
+      this.pendingFailure = err;
+      throw err;
+    };
     return (async (input: RequestInfo | URL, init?: RequestInit) => {
       let res: Response;
       try {
@@ -110,11 +123,13 @@ export class CascadeRelayProvider implements Provider, DescribesEndpoint {
       } catch (err) {
         // Transport failure: DNS, connection refused, TLS, abort on timeout.
         // This is an outage, and the app may fall back to local for it.
-        throw new RelayOutageError(
-          `Could not reach Cascade cloud models at ${this.baseUrl}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-          { cause: err },
+        return fail(
+          new RelayOutageError(
+            `Could not reach Cascade cloud models at ${this.baseUrl}: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            { cause: err },
+          ),
         );
       }
       if (res.ok) {
@@ -136,10 +151,12 @@ export class CascadeRelayProvider implements Provider, DescribesEndpoint {
         body,
         res.headers.get("retry-after"),
       );
-      if (refusal) throw refusal;
-      throw new RelayOutageError(
-        `Cascade cloud models returned HTTP ${res.status} from ${this.baseUrl}.`,
-        { status: res.status },
+      if (refusal) return fail(refusal);
+      return fail(
+        new RelayOutageError(
+          `Cascade cloud models returned HTTP ${res.status} from ${this.baseUrl}.`,
+          { status: res.status },
+        ),
       );
     }) as typeof fetch;
   }
@@ -157,12 +174,30 @@ export class CascadeRelayProvider implements Provider, DescribesEndpoint {
         [HEADER_TIER]: this.options.tier,
         [HEADER_PURPOSE]: this.options.purpose,
       },
-      this.wrappedFetch(),
+      { fetch: this.wrappedFetch(), maxRetries: 0 },
     );
   }
 
+  /**
+   * Run one delegated call, replacing the SDK's generic connection error with
+   * the typed refusal/outage the transport wrapper already determined. Without
+   * this, "your daily allowance is used up" reaches the app as "connection
+   * error" and gets treated as an outage, which would silently spend a
+   * tester's goodwill on a fall back they were never told about.
+   */
+  private async run<T>(fn: () => Promise<T>): Promise<T> {
+    this.pendingFailure = null;
+    try {
+      return await fn();
+    } catch (err) {
+      if (this.pendingFailure) throw this.pendingFailure;
+      throw err;
+    }
+  }
+
   async complete(prompt: string, opts: CompleteOptions = {}): Promise<string> {
-    return this.delegate().complete(prompt, opts);
+    const delegate = this.delegate();
+    return this.run(() => delegate.complete(prompt, opts));
   }
 
   async runTurn(
@@ -170,7 +205,8 @@ export class CascadeRelayProvider implements Provider, DescribesEndpoint {
     tools: CanonicalTool[],
     callbacks: AgentCallbacks,
   ): Promise<string> {
-    return this.delegate().runTurn(messages, tools, callbacks);
+    const delegate = this.delegate();
+    return this.run(() => delegate.runTurn(messages, tools, callbacks));
   }
 
   /**
