@@ -158,6 +158,21 @@ export interface EgressLogEntry {
     launchStage?: string;
   };
   /**
+   * Why a failed attempt failed, in the ledger's own vocabulary. Written on a
+   * "failed-in-flight" line only.
+   *
+   *  - "relay-outage":   the relay did not answer usefully (timeout, network
+   *    error, 5xx). This is the class the app may answer locally for (D-RMA-5).
+   *  - "relay-refusal":  the relay ANSWERED and said no, for a stated reason
+   *    carried in `refusalReason`. Never an outage.
+   *  - "provider-error": anything else the provider threw.
+   *
+   * Metadata only: the reason CODE is recorded, never the provider's error text.
+   */
+  failureKind?: "relay-outage" | "relay-refusal" | "provider-error";
+  /** The relay's refusal reason code, on a "relay-refusal" failure. */
+  refusalReason?: string;
+  /**
    * Set when this call was answered on the LOCAL model after the cloud path
    * failed (D-RMA-5). The fallback is announced in the UI and marked here, so
    * "cloud was unavailable" is auditable rather than invisible.

@@ -44,6 +44,8 @@ import {
 import type { CompleteOptions } from "./providers/types.js";
 import {
   CASCADE_RELAY_HOST,
+  RelayOutageError,
+  RelayRefusalError,
   hasUpstreamFacts,
   type RelayUpstreamAttestation,
 } from "./relay/contract.js";
@@ -545,10 +547,24 @@ export async function completeViaGateway(
       maxTokens: req.maxTokens,
     });
   } catch (err) {
+    // Record WHY it failed, in the ledger's own metadata-only vocabulary. This
+    // is the difference between "the relay was unreachable" (an outage the app
+    // may answer locally for) and "the relay said no" (a stated policy answer),
+    // and an auditor reading the ledger months later cannot reconstruct it from
+    // anything else on the line. The reason CODE is recorded; the provider's
+    // error text never is.
+    const failureKind =
+      err instanceof RelayOutageError
+        ? "relay-outage"
+        : err instanceof RelayRefusalError
+          ? "relay-refusal"
+          : "provider-error";
     const failureEntry: EgressLogEntry = {
       ...entry,
       timestamp: now().toISOString(),
       outcome: "failed-in-flight",
+      failureKind,
+      ...(err instanceof RelayRefusalError ? { refusalReason: err.reason } : {}),
     };
     try {
       writeLedger(failureEntry, logPath);
