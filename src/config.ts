@@ -53,6 +53,7 @@ export function getApiKey(provider: ProviderName = "anthropic"): string | undefi
       openai: "OPENAI_API_KEY",
       google: "", // handled above
       vertex: "", // ADC-authenticated (GOOGLE_CLOUD_PROJECT + gcloud ADC), no API key
+      "cascade-relay": "", // device-token authenticated, never from the environment
       ollama: "",
       local: "",
     };
@@ -109,6 +110,7 @@ export const PROVIDER_LABELS: Record<ProviderName, string> = {
   openai: "OpenAI (GPT)",
   google: "Google (Gemini) — free tier available",
   vertex: "Google Vertex AI (BAA-covered, ADC auth) — PHI-safe cloud",
+  "cascade-relay": "Cascade cloud models (device token, gateway-only)",
   ollama: "Ollama (local, no API key needed)",
   local: "Local (Qwen3.5-2B, runs on-device, no API key needed)",
 };

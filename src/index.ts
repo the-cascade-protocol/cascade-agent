@@ -37,19 +37,66 @@ export {
   completeViaGateway,
   assertBaaForPhi,
   isBaaCoveredEndpoint,
+  isModelTier,
   BaaViolationError,
   GatewayRequestError,
+  MODEL_TIERS,
   VERTEX_TIER_MODELS,
+  RETIRED_TIER_NAMES,
   DEFAULT_MODEL_TIER,
   podEgressLogPath,
 } from "./gateway.js";
 export type {
-  VertexModelTier,
+  ModelTier,
   ModelLaunchStage,
+  TierModel,
+  BaaCoverage,
+  BaaViolationReason,
   GatewayCompleteRequest,
   GatewayCompleteResponse,
   GatewayEgressContext,
   GatewayProvider,
   GatewayDeps,
+  ResolvedRoute,
 } from "./gateway.js";
 export type { CompleteOptions } from "./providers/types.js";
+
+// The Cascade relay (remote model access, [ALPHA-MODEL-ACCESS]): the frozen
+// wire contract, the thin provider, and the entitlement status poll.
+export { CascadeRelayProvider } from "./providers/cascade-relay.js";
+export type { CascadeRelayOptions } from "./providers/cascade-relay.js";
+export {
+  CASCADE_RELAY_HOST,
+  DEFAULT_CASCADE_RELAY_BASE_URL,
+  HEADER_PURPOSE,
+  HEADER_TIER,
+  UPSTREAM_HEADERS,
+  RELAY_REFUSAL_REASONS,
+  RELAY_ENTITLEMENT_STATES,
+  RelayRefusalError,
+  RelayOutageError,
+  isRelayRefusalReason,
+  isRelayEntitlementState,
+  parseRelayRefusal,
+  parseRelayStatus,
+  readUpstreamAttestation,
+  resolveRelayBaseUrl,
+} from "./relay/contract.js";
+export type {
+  RelayRefusalReason,
+  RelayEntitlementState,
+  RelayNotice,
+  RelayStatus,
+  RelayUpstreamAttestation,
+} from "./relay/contract.js";
+export {
+  fetchRelayStatus,
+  relayStatusUrl,
+  RELAY_STATUS_POLL_INTERVAL_MS,
+} from "./relay/status.js";
+export {
+  CASCADE_PURPOSES,
+  PURPOSE_ENUM_VERSION,
+  isCascadePurpose,
+} from "./relay/purposes.js";
+export type { CascadePurpose } from "./relay/purposes.js";

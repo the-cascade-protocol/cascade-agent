@@ -6,7 +6,14 @@ import { VertexProvider, DEFAULT_VERTEX_MODEL } from "./vertex.js";
 import { join } from "path";
 import type { Config } from "../config.js";
 
-/** All supported provider names, in display order. */
+/**
+ * All USER-SELECTABLE provider names, in display order.
+ *
+ * "cascade-relay" is deliberately absent: it is not a provider a person picks,
+ * it is the route the inference gateway takes when a device token is present
+ * (D-RMA-37). Listing it in the CLI picker would offer a choice that cannot be
+ * configured from here.
+ */
 export const ALL_PROVIDERS: ProviderName[] = ["anthropic", "openai", "google", "vertex", "ollama", "local"];
 
 /** Default models per provider. */
@@ -15,6 +22,7 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
   openai: "gpt-4.1",           // latest as of Aug 2025 — check platform.openai.com/docs/models
   google: "gemini-flash-latest",  // free tier available via AI Studio — tracks latest flash automatically
   vertex: DEFAULT_VERTEX_MODEL,   // BAA-covered Vertex AI; cost-efficient Gemini Flash, current gen
+  "cascade-relay": "standard",    // a TIER, not a model: the relay owns the tier table
   ollama: "llama3.2",
   local: DEFAULT_LOCAL_MODEL_FILENAME,
 };
@@ -25,6 +33,7 @@ export const VALIDATION_MODELS: Record<ProviderName, string> = {
   openai: "gpt-4o-mini",
   google: "gemini-flash-latest",
   vertex: DEFAULT_VERTEX_MODEL,   // validated via ADC pre-flight, not an API key (see VertexProvider.validate)
+  "cascade-relay": "",            // validated by the relay's own /v1/status poll
   ollama: "",
   local: "",
 };
@@ -93,6 +102,16 @@ export function createProvider(
       const modelPath = pc.baseUrl ?? join(MODELS_DIR, model);
       return new LocalProvider(modelPath, model);
     }
+
+    case "cascade-relay":
+      // Not constructible from the CLI config: the relay path needs a device
+      // token, which is OS-keychain custody handed in per request by the Tauri
+      // shell (D-RMA-9). The inference gateway builds it; nothing else does.
+      throw new Error(
+        'The "cascade-relay" provider is not selectable from the agent config. ' +
+          "Cascade cloud models are routed by the inference gateway when a device " +
+          "token is present."
+      );
   }
 }
 
