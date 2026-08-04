@@ -12,9 +12,35 @@
 #   container (workbench v1-draft.0.5), the evidence facet model (evidence v1-draft.0.2),
 #   and workbench:userSourceLabel (v1-draft.0.4). Per D-PATH, drafts stay unrowed until
 #   v1.0 graduation; no version row change.
-core=3.3
-health=2.4
-clinical=1.9
+# core 3.4 (2026-08-03): the pod export manifest is now describable vocabulary, so the
+#   prompt teaches reading manifest.ttl as a first orienting call instead of only parsing
+#   it: cascade:ExportManifest (a dcat:Dataset), cascade:RecordSummary (a void:Dataset
+#   whose per-domain counts are rdfs:subPropertyOf void:entities) and the seven count
+#   properties, cascade:InteractionScenario (+ involvedResources / severity /
+#   requiresCrossProvenance), and cascade:provenanceLayers. Also teaches that the five
+#   *Days properties count DAYS COVERED and must never be reported as record counts, and
+#   adds the reading-level terms cascade:date (with the health:date second spelling),
+#   cascade:sampleCount and cascade:loincCode.
+# health 2.5 (2026-08-03): the five clinical record classes (health:LabResultRecord,
+#   ConditionRecord, AllergyRecord, ImmunizationRecord, FamilyHistoryRecord) are now
+#   defined and shaped, and the six wellness containers (health:ActivityData, SleepData,
+#   HeartRateData, BloodPressureData, HRVData, BodyMeasurements) are rdfs:subClassOf
+#   health:HealthProfile, so the prompt now says the history properties hang off those six
+#   subjects. Also teaches the namespace-boundary rule: health: vs clinical: is historical,
+#   not a provenance signal — cascade:dataProvenance is the only source-of-truth for origin.
+# clinical 1.13 (2026-08-03): clinical:LabResult / Condition / Allergy / Immunization are
+#   deprecated in favour of their health: equivalents but are NOT removed, no emitter
+#   changed, and existing pods hold both. The prompt gains a dedicated "Two Spellings"
+#   section teaching that both must be queried, with the per-concept predicate table (the
+#   two spellings share no predicates), and every clinical jq example in the prompt now
+#   reads both. Also teaches the v1.10-v1.12 graph edges clinical:hasEncounter,
+#   clinical:indicationReference (traverse the superproperty to get both stated and
+#   clinical:parsedIndicationReference edges, and present them differently) and
+#   clinical:linkedCondition superseding the untraversable clinical:linkedConditionIds
+#   literal, plus the new ConsultationNote shape and the two unenforced value sets.
+core=3.4
+health=2.5
+clinical=1.13
 coverage=1.3
 checkup=3.2
 pots=1.4

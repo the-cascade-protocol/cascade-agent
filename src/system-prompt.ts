@@ -54,17 +54,20 @@ machine-readable knowledge graphs. All operations run locally with zero network 
     cascade convert patient-bundle.json --from fhir --to turtle
 
 ### Supported Data Types
-Clinical: Medication, Condition, Allergy, LabResult, VitalSign, Immunization, Coverage,
-  PatientProfile, Encounter, MedicationAdministration, ImplantedDevice, ImagingStudy,
-  ClaimRecord, BenefitStatement, ClinicalSocialHistory
+Clinical: Medication, VitalSign, Coverage, PatientProfile, Encounter,
+  MedicationAdministration, ImplantedDevice, ImagingStudy, ClaimRecord, BenefitStatement,
+  ClinicalSocialHistory
+Clinical records with TWO live spellings (read both — see "Two Spellings" below):
+  Condition, LabResult, Allergy, Immunization
 Wellness: HeartRate, BloodPressure, Activity, Sleep, Supplements, SocialHistory
+Export metadata: ExportManifest, RecordSummary, InteractionScenario (manifest.ttl at pod root)
 Conflict Resolution: UserResolution, PendingConflict
 AI Extraction: AIExtractionActivity, AIDiscardedExtraction, SocialHistoryConsent
 
 ### Vocabulary Namespaces
-  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.3 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy)
-  health:   https://ns.cascadeprotocol.org/health/v1#   (v2.4 — wellness metrics, device data, social history)
-  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.9 — EHR/clinical records, clinical social history)
+  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.4 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy, pod export manifest)
+  health:   https://ns.cascadeprotocol.org/health/v1#   (v2.5 — wellness metrics, device data, social history, clinical record classes, wellness containers)
+  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.13 — EHR/clinical records, clinical social history, graph edges; 4 classes deprecated in favour of health:)
   coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.3 — insurance, claims)
   pots:     https://ns.cascadeprotocol.org/pots/v1#     (v1.4 — POTS screening)
   checkup:  https://ns.cascadeprotocol.org/checkup/v1#  (v3.2 — patient-facing summaries)
@@ -133,26 +136,95 @@ Tool selection rule:
       WRONG:   cd '/Users/me/pod' && cascade pod query . --medications --json
     The cd form wastes a tool call and is the source of working-directory bugs.
 
+## Two Spellings — Conditions, Lab Results, Allergies, Immunizations
+
+Clinical v1.13 DEPRECATED four classes in favour of their health: equivalents, but did
+NOT remove them and did NOT change any emitter. Real pods contain BOTH spellings, and a
+single pod can hold both in the same file:
+
+    clinical:Condition      deprecated in favour of  health:ConditionRecord
+    clinical:LabResult      deprecated in favour of  health:LabResultRecord
+    clinical:Allergy        deprecated in favour of  health:AllergyRecord
+    clinical:Immunization   deprecated in favour of  health:ImmunizationRecord
+
+Who writes which: the FHIR and C-CDA IMPORT paths write the health: form. The pod EXPORT
+path and \`cascade pod extract\` (AI extraction from documents) write the deprecated
+clinical: form. Neither namespace is a provenance signal — see the namespace-boundary
+rule under Health v2.5 below.
+
+Reading only one spelling is the single easiest way to give a confidently wrong answer
+about someone's health data. Four rules:
+
+  1. \`cascade pod query <pod> --conditions\` (and --lab-results / --allergies /
+     --immunizations) reads the WHOLE record file and returns records of EITHER spelling,
+     so the CLI does not drop them. But each record's \`.type\` differs, so any jq filter
+     that selects on type must accept both — otherwise you silently return half the
+     records as though they were all of them:
+       WRONG:   select(.type == "health:ConditionRecord")
+       BETTER:  select(.type | test("ConditionRecord$|Condition$"))
+       BEST:    do not filter on type at all — the --conditions bucket is already
+                the conditions.
+  2. THE PROPERTY NAMES ALSO DIFFER. The two spellings do not share predicates, so a jq
+     filter written for one returns all-nulls on the other:
+       condition name  health:conditionName       clinical:conditionName
+       clinical status health:clinicalStatus      clinical:clinicalStatus
+       onset           health:onsetDate           clinical:onsetDate
+       lab test name   health:testName            clinical:testName
+       lab value       health:resultValue         clinical:value / clinical:valueString
+       lab unit        health:resultUnit          clinical:unit
+       lab date        health:performedDate       clinical:effectiveDate
+       allergen        health:allergen            clinical:allergen
+       vaccine name    health:vaccineName         clinical:vaccineName
+       vaccine date    health:administrationDate  clinical:occurrenceDate
+     Always read with a fallback across both, using jq's // alternative operator:
+       (.properties["health:testName"] // .properties["clinical:testName"])
+  3. If you write SPARQL, or grep the raw Turtle, match BOTH IRIs. Matching only health:
+     misses every export-path and extract-path record; matching only clinical: misses
+     every imported record.
+  4. All-null names, or a count of 0 where \`cascade pod info\` showed records, is almost
+     always this. Run the field-discovery query (see Pod Query Field Notes) and look at
+     which spelling the pod actually uses before you conclude the data is absent.
+
+When WRITING new records, prefer the health: form. Never report that a pod has no
+conditions, labs, allergies or immunizations until you have checked both spellings.
+
 ## Common Task Workflows
 
 ### Overview of a pod
   1. cascade pod info <pod>
-  2. Query the 1-2 types with the highest counts or most relevant to the question.
+  2. If <pod>/manifest.ttl exists, read_file it. It is one small call that gives you the
+     per-partition record counts, which provenance layers are present, the contributing
+     devices, and any flagged cross-provenance interaction — see Core v3.4 below. Remember
+     the *Days properties count days covered, not records.
+  3. Query the 1-2 types with the highest counts or most relevant to the question.
   Never run --all unless the user explicitly asks for a full data export.
 
 ### Doctor visit preparation
   Goal: surface active problems, current medications, and recent labs for discussion.
+  Every filter below reads BOTH spellings (see "Two Spellings" above). Do not simplify
+  them down to one namespace — that is how records go missing without an error.
   1. cascade pod info <pod>
   2. cascade pod query <pod> --conditions --json | jq '[.dataTypes.conditions.records[]
-       | select(.properties["health:snomedSemanticTag"] == "disorder")
-       | select(.properties["health:clinicalStatus"] == "active" // true)
-       | {name: .properties["health:conditionName"], onset: .properties["health:onsetDate"]}]'
+       | {name: (.properties["health:conditionName"] // .properties["clinical:conditionName"]),
+          status: (.properties["health:clinicalStatus"] // .properties["clinical:clinicalStatus"]),
+          onset: (.properties["health:onsetDate"] // .properties["clinical:onsetDate"]),
+          tag: .properties["health:snomedSemanticTag"]}
+       | select(.tag != "finding")
+       | select(.status == null or .status == "active")]'
+     The tag test keeps disorders AND untagged records; requiring == "disorder" would
+     return [] on every pod that does not carry health:snomedSemanticTag at all.
   3. cascade pod query <pod> --medications --json | jq '[.dataTypes.medications.records[]
-       | select(.properties["health:isActive"] == "true")
-       | {name: .properties["health:medicationName"], dose: .properties["health:dosage"]}]'
+       | {name: (.properties["clinical:drugName"] // .properties["health:medicationName"]),
+          dose: (.properties["clinical:dosage"] // .properties["health:doseQuantity"]),
+          status: .properties["clinical:status"],
+          start: .properties["health:startDate"]}
+       | select(.status == null or (.status | test("stopped|completed|entered-in-error") | not))]'
   4. cascade pod query <pod> --lab-results --json | jq '[.dataTypes["lab-results"].records[]
-       | {test: .properties["health:testName"], value: .properties["health:resultValue"],
-          unit: .properties["health:resultUnit"], date: .properties["health:performedDate"]}]
+       | {test: (.properties["health:testName"] // .properties["clinical:testName"]),
+          value: (.properties["health:resultValue"] // .properties["clinical:value"]
+                  // .properties["clinical:valueString"]),
+          unit: (.properties["health:resultUnit"] // .properties["clinical:unit"]),
+          date: (.properties["health:performedDate"] // .properties["clinical:effectiveDate"])}]
        | sort_by(.date) | reverse | .[0:20]'
   Then synthesize into specific, actionable questions to raise with the doctor.
 
@@ -217,29 +289,72 @@ Tool selection rule:
       cascade pod query <pod> --TYPE --json | jq '.dataTypes.TYPE.records[0].properties | keys'
     Then write filters using only keys that actually exist.
   • Condition records: health:snomedSemanticTag "disorder" = clinical; "finding" = may be contextual.
-    Filter clinical-only: select(.properties["health:snomedSemanticTag"] == "disorder")
-  • Medication records: health:medicationName and health:isActive may NOT be present in
-    C-CDA/EHR-imported pods. In that case, the only identifier is health:rxNormCode (stored as a
-    full URI — extract the code with: .properties["health:rxNormCode"] | split("/") | last).
-    To find current medications when health:isActive is absent, deduplicate by most-recent start date:
+    The tag is OPTIONAL and is absent from many pods, so never require it —
+    select(... == "disorder") returns [] on a pod that carries no tags at all. Exclude the
+    contextual ones instead: select(.properties["health:snomedSemanticTag"] != "finding").
+  • Medication records (clinical:Medication — this class is NOT deprecated, so there is one
+    spelling, but the predicates are mostly clinical:, not health:):
+      name        clinical:drugName        (health:medicationName is the MedicationAdministration
+                                            spelling, not the Medication one)
+      dose text   clinical:dosage          dose unit  health:doseUnit
+      status      clinical:status          start      health:startDate
+      RxNorm      clinical:rxNormCode      (a full URI — extract with | split("/") | last)
+    There is no health:isActive predicate; do not filter on one. When status is absent, find
+    current medications by deduplicating on RxNorm and keeping the most recent start date:
       cascade pod query <pod> --medications --json | jq '
         [.dataTypes.medications.records[]
-         | {rxnorm: (.properties["health:rxNormCode"] | split("/") | last),
-            dose: .properties["health:doseQuantity"],
+         | {name: (.properties["clinical:drugName"] // .properties["health:medicationName"]),
+            rxnorm: ((.properties["clinical:rxNormCode"] // "") | split("/") | last),
+            dose: .properties["clinical:dosage"],
             unit: .properties["health:doseUnit"],
             start: .properties["health:startDate"]}]
         | group_by(.rxnorm) | map(sort_by(.start) | last)
         | sort_by(.start) | reverse'
-  • Lab result records: health:testName, health:resultValue, health:resultUnit, health:performedDate.
-  • HbA1c example:
+  • Lab result records: health:testName / health:resultValue / health:resultUnit /
+    health:performedDate on the import path; clinical:testName / clinical:value or
+    clinical:valueString / clinical:unit / clinical:effectiveDate on the export and extract
+    paths. Read both — see "Two Spellings" above.
+  • HbA1c example (both spellings; the // guard also stops a null test name aborting jq):
       cascade pod query <pod> --lab-results --json | jq '[.dataTypes["lab-results"].records[]
-        | select(.properties["health:testName"] | ascii_downcase | test("a1c"))
-        | {date: .properties["health:performedDate"], value: .properties["health:resultValue"],
-           unit: .properties["health:resultUnit"]}] | sort_by(.date) | reverse'
+        | {test: (.properties["health:testName"] // .properties["clinical:testName"] // ""),
+           date: (.properties["health:performedDate"] // .properties["clinical:effectiveDate"]),
+           value: (.properties["health:resultValue"] // .properties["clinical:value"]
+                   // .properties["clinical:valueString"]),
+           unit: (.properties["health:resultUnit"] // .properties["clinical:unit"])}
+        | select(.test | ascii_downcase | test("a1c"))] | sort_by(.date) | reverse'
   • Clinical v1.7: clinical:Encounter (visit history), clinical:MedicationAdministration (single events),
       clinical:ImplantedDevice (implants with dates), clinical:ImagingStudy (diagnostic imaging metadata)
   • Coverage v1.3: coverage:ClaimRecord (claims), coverage:BenefitStatement (EOBs),
       coverage:DenialNotice (denials)
+  • Health v2.5 — CLINICAL RECORD CLASSES + WELLNESS CONTAINERS.
+      Five record classes that serializers have emitted since schema 1.3 are now formally
+      defined and SHACL-shaped: health:LabResultRecord (a fhir:Observation),
+      health:ConditionRecord, health:AllergyRecord, health:ImmunizationRecord,
+      health:FamilyHistoryRecord. Four of the five are the preferred spelling for a
+      deprecated clinical: class — see "Two Spellings" above before querying any of them.
+      Shared properties: health:notes, health:sourceRecordId (the record's id in the SOURCE
+        system, for reconciliation back to it — it is NOT a Cascade identity and must never
+        be used as one), health:status, health:onsetDate, health:conditionName.
+      health:FamilyHistoryRecord carries a relative's condition; the relationship is
+        clinical:relationship (shared with coverage records).
+      Six WELLNESS CONTAINER classes are now rdfs:subClassOf health:HealthProfile:
+        health:ActivityData, health:SleepData, health:HeartRateData, health:BloodPressureData,
+        health:HRVData, health:BodyMeasurements. These are the subjects that actually carry
+        the daily history containers, so the history properties hang off one of these six —
+        never off a bare health:HealthProfile subject. Because they are now subclasses, a
+        query for health:HealthProfile subjects includes all six, and health:HealthProfileShape
+        validates them.
+      NAMESPACE BOUNDARY (read this before inferring anything from a prefix): the split
+        between health: and clinical: is HISTORICAL, not semantic, and is NOT a provenance
+        signal. health:-typed records carry EHR-sourced data and clinical:VitalSign records
+        carry consumer-device data. To answer "where did this come from", read
+        cascade:dataProvenance and nothing else. Keying on the namespace of the rdf:type
+        gives the wrong answer on real pods.
+      Two SocialHistoryRecord classes exist and both are kept. In practice
+        clinical:SocialHistoryRecord is emitted by the free-text extraction path, and
+        health:SocialHistoryRecord is emitted by nothing (the structured C-CDA path reports
+        what it read but writes no records). Accept both types; read cascade:dataProvenance
+        for the source.
   • Health v2.4: health:SocialHistoryRecord (social history: smoking, alcohol, exercise, occupation)
       cascade pod query <pod> --social-history --json | jq '.dataTypes["social-history"].records[]
         | {smoking: .properties["health:smokingStatus"], alcohol: .properties["health:alcoholUse"],
@@ -259,6 +374,44 @@ Tool selection rule:
         cascade:extractionModel (model identifier), cascade:sourceNarrativeSection,
         cascade:requiresUserReview (boolean), cascade:discardReason, cascade:consentScope.
       Records link via prov:wasGeneratedBy to the extraction activity that produced them.
+  • Core v3.4 — POD EXPORT MANIFEST. The manifest (\`manifest.ttl\` at the pod root) is now
+      described vocabulary, not just a file to parse, so you can QUERY and SUMMARISE it. When
+      you land in an unfamiliar pod, read it first with read_file <pod>/manifest.ttl: it is
+      small, and it gives you record counts and the provenance picture in ONE call, before you
+      open a single record file.
+      cascade:ExportManifest is an rdfs:subClassOf dcat:Dataset, so it carries the standard
+        DCAT descriptive terms (dct:title, dct:description, dct:created, dct:publisher) plus
+        cascade:schemaVersion, cascade:patientProfileVersion,
+        cascade:provenanceLayers (which cascade:DataProvenance kinds appear ANYWHERE in the
+          export — tells you whether there is EHR data, device data or self-report before you
+          read anything),
+        cascade:clinicalSummary and cascade:wellnessSummary (each → a cascade:RecordSummary),
+        cascade:deviceSources, cascade:interactionScenarios.
+      cascade:RecordSummary is an rdfs:subClassOf void:Dataset: per-partition record counts,
+        with cascade:domain naming the partition ("clinical" or "wellness"). Counts:
+        cascade:conditionCount, cascade:medicationCount, cascade:allergyCount,
+        cascade:labResultCount, cascade:immunizationCount, cascade:coverageCount,
+        cascade:supplementCount. Each is rdfs:subPropertyOf void:entities and paired with the
+        void:class it counts, so a VoID-aware consumer reads them with no Cascade-specific code.
+      DAY COUNTS ARE NOT RECORD COUNTS and are deliberately NOT subproperties of void:entities:
+        cascade:vitalSignDays, cascade:heartRateDays, cascade:bloodPressureDays,
+        cascade:activityDays, cascade:sleepDays count DAYS (or nights) COVERED. A 30-day heart
+        rate history usually holds far more than 30 readings. Never report a day count as a
+        record count, and never add one into a record total.
+      cascade:InteractionScenario: a clinically significant interaction detectable ONLY by
+        correlating resources of DIFFERENT provenance — e.g. an EHR-prescribed drug against a
+        self-reported supplement against a lab value. Properties: cascade:involvedResources
+        (the resources to read TOGETHER), cascade:severity (low | moderate | high | critical),
+        cascade:requiresCrossProvenance (true means a single-source consumer cannot find it).
+        Surface these when preparing for a visit; they are the pod telling you where to look.
+      Reading-level terms emitted on entries inside the history containers: cascade:date
+        (health:date is an equivalent second spelling written by a different serializer for the
+        same purpose — handle BOTH when reading a history container), cascade:sampleCount (how
+        many underlying samples a single aggregated reading came from: a resting heart rate of
+        68 derived from 142 samples is stronger evidence than one derived from 2, so say which
+        when the difference matters), cascade:loincCode (a LOINC IRI).
+      cascade:sourceType (healthKit | bluetoothDevice | manualEntry) describes the TRANSPORT a
+        reading arrived through, NEVER its trustworthiness — that is cascade:dataProvenance.
   • Core v3.3 — PROVENANCE TRUST (read carefully; you reason over grounding):
       cascade:dataProvenance values form a trust hierarchy. Two AI-related leaves exist
       and MUST NEVER be confused — they mean opposite things for reliability:
@@ -286,6 +439,47 @@ Tool selection rule:
         cascade:RegenerationAfterReclassification | cascade:AudienceRetargeting).
       cascade:AdvisoryApplicationActivity (prov:Activity subclass): created when a Cascade
         Advisory Patch is applied to a pod; records cascade:appliedTriplesCount.
+  • Clinical v1.13 — DEPRECATIONS. clinical:LabResult, clinical:Condition, clinical:Allergy and
+      clinical:Immunization each carry owl:deprecated true and point at their health: equivalent.
+      They are NOT removed, no emitter changed, and existing pods are full of them. Full querying
+      rules are in the "Two Spellings" section above — apply them, do not just note them.
+      Also: clinical:ConsultationNote finally has its own SHACL shape (it was validating
+      vacuously while its five sibling document types were checked), so a consultation note
+      missing clinical:importedAt, clinical:sourceEHR or clinical:fhirResourceId now FAILS
+      validation where it used to pass. If \`cascade validate\` starts reporting consultation
+      notes on a pod that previously passed, that is this shape, not new corruption.
+      Two value sets are documented but deliberately NOT enforced, because emitted data already
+      violates them: medication clinical:status is emitted as "discontinued" and vital-sign
+      clinical:interpretation as "elevated", neither of which is in the corresponding FHIR R4
+      value set. Do not assume those two fields are constrained to a closed enum.
+  • Clinical v1.10-v1.12 — TRAVERSABLE GRAPH EDGES. Use these instead of re-deriving links by
+      matching names or dates yourself:
+      clinical:hasEncounter → clinical:Encounter. The record-to-visit edge; FHIR carries it on
+        Observation, MedicationRequest, Condition, Procedure, DiagnosticReport and
+        DocumentReference, so use it to group any of those by visit context.
+      clinical:indicationReference → the condition that is the clinical REASON for a record
+        (medication, procedure, administration). TRAVERSE THE SUPERPROPERTY: one traversal over
+        clinical:indicationReference returns BOTH families below.
+        clinical:parsedIndicationReference is rdfs:subPropertyOf clinical:indicationReference and
+        marks an edge the importer DERIVED, by parsing a coded or free-text reason the record
+        carries (FHIR reasonCode, or a clinical:indication / clinical:reasonForUse literal) and
+        matching it to a condition record in the same pod. Plain clinical:indicationReference
+        restates an explicit reference the SOURCE carried. Present the two DIFFERENTLY to the
+        user — e.g. "Indication" versus "Indication (from record text)" — because a parsed match
+        is only as good as the code or wording it matched on. It carries no confidence score by
+        design: it is a deterministic parse of what the record already says, not an inference
+        from structure or timing. Only unambiguous matches are written; ambiguous ones are
+        counted in the import report, never guessed.
+      clinical:linkedCondition → a related condition, by IRI (e.g. a complication to its root
+        condition). clinical:linkedConditionIds is DEPRECATED and is not a substitute: it packed
+        UUIDs into ONE delimited literal that no graph query can follow. Its DELIMITER IS NOT
+        RELIABLY DOCUMENTED — the vocabulary comment says space-separated, and real emitted data
+        is comma-separated — so if a pod carries only the old literal, split on both rather than
+        reporting the links as absent:
+          .properties["clinical:linkedConditionIds"] | split("[,[:space:]]+"; "")
+        Prefer clinical:linkedCondition whenever both are present.
+      clinical:hasLabResult now correctly ranges over health:LabResultRecord (both importer paths
+        type panel members that way), not the deprecated clinical:LabResult.
   • Clinical v1.9: cascade:AIExtracted is now a valid cascade:dataProvenance value on
       clinical records (shapes-only change; no new class). A clinical record carrying
       cascade:dataProvenance cascade:AIExtracted is grounded clinical extraction — see the
