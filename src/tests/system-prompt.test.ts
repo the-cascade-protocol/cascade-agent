@@ -696,13 +696,40 @@ function main(): void {
   });
 
   test("linkedConditionIds is taught as deprecated AND as unfollowable by a graph query", () => {
-    const block = PROMPT.split("clinical:linkedConditionIds")[1]?.split("\n      clinical:")[0] ?? "";
+    const block = PROMPT.split("clinical:linkedConditionIds")[1] ?? "";
     assert.ok(block.length > 0, "clinical:linkedConditionIds must be addressed");
     assert.ok(/DEPRECATED/.test(block), "it must be marked deprecated");
     assert.ok(
-      /space-separated/.test(block) && /no graph query can follow/.test(block),
-      "the reason matters: it is one space-separated literal, so an agent that treats it as " +
-        "an edge silently finds nothing"
+      /no graph query can follow/.test(block),
+      "the reason matters: it is one delimited literal, so an agent that treats it as an edge " +
+        "silently finds nothing"
+    );
+  });
+
+  test("the taught linkedConditionIds split survives BOTH delimiters seen in the wild", () => {
+    // The vocabulary comment says space-separated; the serializer that actually
+    // writes the literal emits commas. A recipe that trusts either one alone
+    // returns a single bogus id containing the whole string, and reports one
+    // link where there are two.
+    const recipe = PROMPT.match(/clinical:linkedConditionIds"\]\s*\|\s*(split\([^\n]*\))/);
+    assert.ok(recipe, "the prompt must give a concrete split recipe, not just a warning");
+    const filter = `.["clinical:linkedConditionIds"] | ${recipe![1]}`;
+    for (const literal of [
+      "3f2a-aaa 9c1b-bbb", // as the vocabulary comment describes it
+      "3f2a-aaa,9c1b-bbb", // as the emitter actually writes it
+      "3f2a-aaa, 9c1b-bbb", // and with a following space
+    ]) {
+      const ids = jq(filter, { "clinical:linkedConditionIds": literal }) as string[];
+      assert.deepStrictEqual(
+        ids,
+        ["3f2a-aaa", "9c1b-bbb"],
+        `the split recipe must recover 2 ids from ${JSON.stringify(literal)}`
+      );
+    }
+    assert.ok(
+      /DELIMITER IS NOT\s+RELIABLY DOCUMENTED/.test(PROMPT),
+      "the prompt must say the delimiter is unreliable — an agent told only 'space-separated' " +
+        "will write a whitespace split and silently mis-parse every real record"
     );
   });
 

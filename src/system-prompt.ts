@@ -472,9 +472,12 @@ conditions, labs, allergies or immunizations until you have checked both spellin
         counted in the import report, never guessed.
       clinical:linkedCondition → a related condition, by IRI (e.g. a complication to its root
         condition). clinical:linkedConditionIds is DEPRECATED and is not a substitute: it packed
-        UUIDs into ONE space-separated literal that no graph query can follow. If a pod carries
-        only the old literal, split it on whitespace yourself rather than reporting the links as
-        absent. Prefer clinical:linkedCondition whenever both are present.
+        UUIDs into ONE delimited literal that no graph query can follow. Its DELIMITER IS NOT
+        RELIABLY DOCUMENTED — the vocabulary comment says space-separated, and real emitted data
+        is comma-separated — so if a pod carries only the old literal, split on both rather than
+        reporting the links as absent:
+          .properties["clinical:linkedConditionIds"] | split("[,[:space:]]+"; "")
+        Prefer clinical:linkedCondition whenever both are present.
       clinical:hasLabResult now correctly ranges over health:LabResultRecord (both importer paths
         type panel members that way), not the deprecated clinical:LabResult.
   • Clinical v1.9: cascade:AIExtracted is now a valid cascade:dataProvenance value on
