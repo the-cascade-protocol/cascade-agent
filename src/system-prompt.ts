@@ -66,11 +66,11 @@ AI Extraction: AIExtractionActivity, AIDiscardedExtraction, SocialHistoryConsent
 
 ### Vocabulary Namespaces
   core:     https://ns.cascadeprotocol.org/core/v1#     (v3.4 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy, pod export manifest)
-  health:   https://ns.cascadeprotocol.org/health/v1#   (v2.5 — wellness metrics, device data, social history, clinical record classes, wellness containers)
-  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.13 — EHR/clinical records, clinical social history, graph edges; 4 classes deprecated in favour of health:)
-  coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.3 — insurance, claims)
+  health:   https://ns.cascadeprotocol.org/health/v1#   (v2.6 — wellness metrics, device data, social history, clinical record classes, wellness containers)
+  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.14 — EHR/clinical records, clinical social history, graph edges, encounters; 4 classes deprecated in favour of health:)
+  coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.4 — insurance, claims)
   pots:     https://ns.cascadeprotocol.org/pots/v1#     (v1.4 — POTS screening)
-  checkup:  https://ns.cascadeprotocol.org/checkup/v1#  (v3.2 — patient-facing summaries)
+  checkup:  https://ns.cascadeprotocol.org/checkup/v1#  (v3.3 — patient-facing summaries)
   workbench: https://ns.cascadeprotocol.org/workbench/v1# (v1-draft — Workbench app objects; notes/ Web Annotation substrate, record overlays, filing labels)
   evidence:  https://ns.cascadeprotocol.org/evidence/v1#  (v1-draft — assertion grounding facets: direction / basis / strength / settled / reason / confidence)
   oa:        http://www.w3.org/ns/oa#                     (external, W3C Web Annotation — notes/ substrate: oa:Annotation + oa:motivatedBy)
@@ -439,6 +439,47 @@ conditions, labs, allergies or immunizations until you have checked both spellin
         cascade:RegenerationAfterReclassification | cascade:AudienceRetargeting).
       cascade:AdvisoryApplicationActivity (prov:Activity subclass): created when a Cascade
         Advisory Patch is applied to a pod; records cascade:appliedTriplesCount.
+  • Health v2.6 / Clinical v1.14 — VALUE SETS AND CARDINALITY NOW MATCH FHIR. Shapes only; no
+      class or property changed, and nothing that validated before stops validating. What this
+      changes for YOU is what you may assume when reading a pod:
+      health:interpretation and clinical:interpretation on LAB results are now the HL7 v3
+        ObservationInterpretation code system (http://terminology.hl7.org/CodeSystem/
+        v3-ObservationInterpretation), the code system FHIR R4 binds Observation.interpretation
+        to. DO NOT assume a lab interpretation is one of normal/high/low/abnormal/critical. It
+        may be a susceptibility code (S, I, R, SDD, NCL, NS), a detection code (POS, NEG, DET,
+        ND, IND), a reactivity code (RR, WR, NR), a change code (B, D, U, W), an exception code,
+        or one of the normality codes (N, A, H, L, HH, LL, HU, LU, HX, LX). The single most
+        common value in a real import is "unknown", from the data-absent-reason code system:
+        it means the SOURCE carried no interpretation, NOT that the result was normal and NOT
+        that it was abnormal. Never present "unknown" as a finding. The pre-v2.6 words are still
+        accepted, so a pod may contain both spellings; treat "N" and "normal" as the same claim.
+        NOTE the scope: this is LAB interpretation. Vital-sign clinical:interpretation is still
+        unconstrained, as the Clinical v1.13 note below says.
+      MULTI-VALUED CODES. health:labCategory, health:testCode, health:icd10Code,
+        health:snomedCode, clinical:snomedCode and clinical:icd10Code may each appear MORE THAN
+        ONCE on one record, because FHIR Observation.category and CodeableConcept.coding are
+        both 0..*. A dual-coded problem-list entry carrying an ICD-10-CM code AND a SNOMED CT
+        code is one condition, not two. Do not report a second code as a second diagnosis, and
+        do not assume the first one you read is the only one.
+      DATES MAY BE DATE-PRECISION. Source-carried dates (health:performedDate,
+        health:reportedDate, health:onsetDate, health:administrationDate,
+        clinical:encounterDate, clinical:documentDate, clinical:onsetDate,
+        clinical:procedureDate) may be xsd:date rather than xsd:dateTime, because FHIR's
+        dateTime primitive is partial-precision and C-CDA effectiveTime often states only a
+        calendar day. A date with no time means the time was NOT RECORDED. Never present or
+        compute a time of day for one.
+      clinical:Encounter IS NOW VALIDATED. It had no SHACL shape at all, so \`cascade validate\`
+        reported PASS on encounters having evaluated zero constraints. clinical:EncounterShape
+        now checks cardinality, datatype and provenance. If validate starts reporting encounters
+        on a pod that previously passed, that is this shape, not new corruption. Note that
+        encounterClass is deliberately unconstrained (FHIR binds Encounter.class extensibly), so
+        expect both v3-ActCode abbreviations (AMB, EMER, IMP, HH) and display strings.
+      coverage:coverageType is no longer a closed enum at Violation severity, because FHIR binds
+        Coverage.type extensibly: expect v3-ActCode codes such as EHCPOL alongside the older
+        primary/secondary/dental/vision values, and payer-local codes. Do not treat an
+        unrecognised coverage type as invalid data. coverage:subscriberRelationship now covers
+        the full SubscriberPolicyholder code system, including "common" (common law spouse) and
+        "injured".
   • Clinical v1.13 — DEPRECATIONS. clinical:LabResult, clinical:Condition, clinical:Allergy and
       clinical:Immunization each carry owl:deprecated true and point at their health: equivalent.
       They are NOT removed, no emitter changed, and existing pods are full of them. Full querying
