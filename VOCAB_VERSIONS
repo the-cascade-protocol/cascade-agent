@@ -38,9 +38,19 @@
 #   clinical:parsedIndicationReference edges, and present them differently) and
 #   clinical:linkedCondition superseding the untraversable clinical:linkedConditionIds
 #   literal, plus the new ConsultationNote shape and the two unenforced value sets.
+# health 2.6 / clinical 1.14 / coverage 1.4 / checkup 3.3 (2026-08-08): shapes-only
+#   alignment to ratified standards (spec PR the-cascade-protocol/spec#16). The system
+#   prompt is taught the four facts that change what the agent may ASSUME when reading a
+#   pod: lab interpretation is the HL7 v3 ObservationInterpretation code system (and
+#   "unknown" means the source carried none, not "normal"); labCategory, testCode,
+#   icd10Code and snomedCode are repeatable, so a dual-coded problem is one condition and
+#   not two; source-carried dates may be xsd:date, and a date with no time means the time
+#   was not recorded; clinical:Encounter is now validated at all, and coverage:coverageType
+#   is no longer a closed enum. checkup 3.3 is an ICD-10-CM pattern fix with no agent-facing
+#   consequence and is recorded here only to keep the rows in step.
 core=3.4
-health=2.5
-clinical=1.13
-coverage=1.3
-checkup=3.2
+health=2.6
+clinical=1.14
+coverage=1.4
+checkup=3.3
 pots=1.4
