@@ -54,7 +54,7 @@ machine-readable knowledge graphs. All operations run locally with zero network 
     cascade convert patient-bundle.json --from fhir --to turtle
 
 ### Supported Data Types
-Clinical: Medication, VitalSign, Coverage, PatientProfile, Encounter,
+Clinical: Medication, VitalSign, Procedure, Coverage, PatientProfile, Encounter,
   MedicationAdministration, ImplantedDevice, ImagingStudy, ClaimRecord, BenefitStatement,
   ClinicalSocialHistory
 Clinical records with TWO live spellings (read both — see "Two Spellings" below):
@@ -65,9 +65,9 @@ Conflict Resolution: UserResolution, PendingConflict
 AI Extraction: AIExtractionActivity, AIDiscardedExtraction, SocialHistoryConsent
 
 ### Vocabulary Namespaces
-  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.4 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy, pod export manifest)
-  health:   https://ns.cascadeprotocol.org/health/v1#   (v2.6 — wellness metrics, device data, social history, clinical record classes, wellness containers)
-  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.14 — EHR/clinical records, clinical social history, graph edges, encounters; 4 classes deprecated in favour of health:)
+  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.6 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy, pod export manifest, source identity, data-absent reasons)
+  health:   https://ns.cascadeprotocol.org/health/v1#   (v2.7 — wellness metrics, device data, social history, clinical record classes, wellness containers, verbatim interpretation source codes)
+  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.15 — EHR/clinical records, clinical social history, graph edges, encounters, procedures, verbatim interpretation source codes; 4 classes deprecated in favour of health:)
   coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.4 — insurance, claims)
   pots:     https://ns.cascadeprotocol.org/pots/v1#     (v1.4 — POTS screening)
   checkup:  https://ns.cascadeprotocol.org/checkup/v1#  (v3.3 — patient-facing summaries)
@@ -136,7 +136,7 @@ Tool selection rule:
       WRONG:   cd '/Users/me/pod' && cascade pod query . --medications --json
     The cd form wastes a tool call and is the source of working-directory bugs.
 
-## Two Spellings — Conditions, Lab Results, Allergies, Immunizations
+## Two Spellings — Conditions, Lab Results, Allergies, Immunizations, Procedure Names
 
 Clinical v1.13 DEPRECATED four classes in favour of their health: equivalents, but did
 NOT remove them and did NOT change any emitter. Real pods contain BOTH spellings, and a
@@ -187,6 +187,27 @@ about someone's health data. Four rules:
 
 When WRITING new records, prefer the health: form. Never report that a pod has no
 conditions, labs, allergies or immunizations until you have checked both spellings.
+
+### Procedure names: ONE class, two live predicates (clinical v1.15 migration window)
+
+Procedures are NOT a fifth deprecated-class pair, and the difference changes what you may
+write. There is ONE class, clinical:Procedure, and ONE canonical name predicate,
+clinical:procedureName. There is no health: procedure class and the health vocabulary does
+not define a procedure name at all. But a C-CDA import path wrote the name to
+health:procedureName on records it typed clinical:Procedure, so real pods hold procedure
+names under BOTH predicates:
+
+    clinical:procedureName   CANONICAL. The only spelling a producer may write.
+    health:procedureName     Legacy import spelling. Accepted only during the v1.15
+                             migration window, and validated only for shape, not blessed.
+
+A procedure query that reads one predicate reports the other half of the pod's procedures
+as unnamed, or as having no procedures at all. Read both, canonical first:
+    (.properties["clinical:procedureName"] // .properties["health:procedureName"])
+Never WRITE the health: spelling: it is a defect being migrated out, not an alternative
+serialization. Both the constraint that accepts it and the warning that flags it are
+removed together in a later clinical version, at which point the health: term can be
+dropped from queries. Until then, a query naming only clinical:procedureName is incomplete.
 
 ## Common Task Workflows
 
@@ -322,6 +343,15 @@ conditions, labs, allergies or immunizations until you have checked both spellin
                    // .properties["clinical:valueString"]),
            unit: (.properties["health:resultUnit"] // .properties["clinical:unit"])}
         | select(.test | ascii_downcase | test("a1c"))] | sort_by(.date) | reverse'
+  • Procedure records (clinical:Procedure). The name is under EITHER clinical:procedureName
+    (canonical) or health:procedureName (legacy C-CDA import spelling) and you must read both:
+    see "Procedure names" above. Other predicates are single-spelled: clinical:procedureDate,
+    clinical:bodySite, clinical:cptCode, clinical:snomedCode (repeatable).
+      cascade pod query <pod> --procedures --json | jq '[.dataTypes.procedures.records[]
+        | {name: (.properties["clinical:procedureName"] // .properties["health:procedureName"]),
+           date: .properties["clinical:procedureDate"],
+           site: .properties["clinical:bodySite"]}] | sort_by(.date) | reverse'
+    A procedures answer where some names are null is this, not a pod with unnamed procedures.
   • Clinical v1.7: clinical:Encounter (visit history), clinical:MedicationAdministration (single events),
       clinical:ImplantedDevice (implants with dates), clinical:ImagingStudy (diagnostic imaging metadata)
   • Coverage v1.3: coverage:ClaimRecord (claims), coverage:BenefitStatement (EOBs),
@@ -439,6 +469,116 @@ conditions, labs, allergies or immunizations until you have checked both spellin
         cascade:RegenerationAfterReclassification | cascade:AudienceRetargeting).
       cascade:AdvisoryApplicationActivity (prov:Activity subclass): created when a Cascade
         Advisory Patch is applied to a pod; records cascade:appliedTriplesCount.
+  • Core v3.5 (cascade:sourceIdentity): THE THREE SOURCE AXES. "Where did this record come
+      from" has three different answers in a pod, and collapsing any two of them is a defect
+      that has been measured on real pods:
+      ORIGIN     cascade:sourceIdentity   WHICH ORGANIZATION the record came from, as a
+                   canonical token that is the SAME whatever transport carried it. This is the
+                   ONLY one of the three that may be used as a reconciliation key, or as the
+                   grouping key for "records from one organization".
+      LABEL      clinical:sourceEHR       what to CALL that organization on screen. Human
+                   readable and source-worded, so two spellings of one organization are two
+                   labels. Display it; never key on it.
+      INGESTION  cascade:sourceSystem     HOW AND WHEN the data entered the pod: the import
+                   batch. Explicitly NEVER an origin and NEVER a reconciliation key. One batch
+                   routinely carries several organizations (a consumer health app exports every
+                   connected account under one label), and one organization routinely arrives
+                   in many batches. Keying "same source?" on it answers yes for every pair in a
+                   single-batch pod, and no for two exports of one organization.
+      cascade:sourceIdentity is SCHEME-PREFIXED, and the scheme tells you how much the producer
+        actually knew. Read the scheme before you trust the token:
+          org:{slug}         an organization was derivable. The slug is normalized so a FHIR
+                             export and a C-CDA document of one health system agree ("Meridian
+                             Health System" and "meridianhealth.example" both give org:meridian).
+          ns:{namespace}     no organization was derivable, but the identifiers have an
+                             assigning authority (the FHIR server base URL, or the C-CDA id root
+                             OID). Two records share an origin only if the namespace matches.
+          transport:{label}  LAST RESORT. Nothing named or located an organization, so the value
+                             restates cascade:sourceSystem, honestly prefixed. It is NOT an
+                             origin claim: treat two transport: values as "origin unknown", never
+                             as evidence of a shared source.
+      Group by identity, display the label, and say so when the origin is unknown:
+      cascade pod query <pod> --lab-results --json | jq '[.dataTypes["lab-results"].records[]
+        | {origin: (.properties["cascade:sourceIdentity"] // "origin unknown"),
+           label: .properties["clinical:sourceEHR"],
+           batch: .properties["cascade:sourceSystem"]}]
+        | group_by(.origin)
+        | map({origin: .[0].origin, labels: ([.[].label] | unique), records: length})'
+      workbench:userSourceLabel (below) is the user filing label. It is another LABEL-axis
+        value, not an origin: it changes what is displayed and grouped in the app, and must
+        never be used to decide that two records came from the same organization.
+  • Core v3.6 (cascade:dataAbsentReason): WHY A VALUE IS ABSENT, WHICH IS NOT "NO DATA".
+      A record carrying cascade:dataAbsentReason has NO value, and the property says why. That
+      is an ANSWER, and you must never report it as "no data", "nothing found" or an empty
+      result. "The draw was ordered and the patient declined it" and "nobody ever asked" are
+      different clinical facts, and a v3.6 pod can tell you which one you are looking at.
+      Semantics are exactly FHIR R4 Observation.dataAbsentReason. The value is ALWAYS one of the
+      15 codes of http://terminology.hl7.org/CodeSystem/data-absent-reason:
+        unknown            a value applies but is not known, and no reason was given
+        asked-unknown      the source WAS asked and did not know
+        temp-unknown       not available now, expected later
+        not-asked          never sought
+        asked-declined     asked and refused. A patient decision: report it as one
+        masked             withheld for security or privacy
+        not-applicable     known to have no proper value
+        unsupported        the real value is outside the permitted value domain
+        as-text            the value exists only as free text elsewhere on the record
+        error              an error prevented a value
+        not-performed      the measurement or procedure was not carried out
+        not-permitted      the producer was not permitted to supply it
+        not-a-number       the computed value is not a number
+        negative-infinity  the computed value is negative infinity
+        positive-infinity  the computed value is positive infinity
+      SCOPE: it explains the absence of the record's own VALUE, and a record that HAS a value
+        must not carry it. An absent INTERPRETATION on a record whose value is present is
+        recorded on the interpretation property itself, which accepts the same 15 codes.
+      A raw HL7 v3 NullFlavor code (UNK, NAV, NASK, ASKU, NAVU, MSK, NI, OTH, NINF, PINF) is
+        NOT a legal value here. Those are what a C-CDA document writes, and the importer maps
+        them: UNK/NAVU/NI to unknown, ASKU to asked-unknown, NASK to not-asked, NAV to
+        temp-unknown, MSK to masked, NA to not-applicable, OTH to unsupported, NINF/PINF to the
+        infinities. A raw NullFlavor sitting in this property is an importer defect to report,
+        not a code to interpret.
+      Absence of the property means only that the producer said nothing about why a value is
+        missing. It is not a validation finding and not evidence that a value exists.
+      cascade pod query <pod> --vital-signs --json | jq '[.dataTypes["vital-signs"].records[]
+        | {type: .properties["clinical:vitalType"],
+           value: .properties["clinical:value"],
+           absent: .properties["cascade:dataAbsentReason"]}
+        | select(.value == null or .absent != null)]'
+  • Health v2.7 / Clinical v1.15 (interpretationSourceCode): THE SOURCE'S OWN WORD, KEPT.
+      An interpretation now has TWO properties, and a complete answer reads both:
+        health:interpretation / clinical:interpretation   the NORMALIZED code, bound to a
+          74-value set: the 49 selectable HL7 v3 ObservationInterpretation codes, ALL 15
+          data-absent-reason codes, and the 10 retained pre-v2.6 words (normal, high, low,
+          abnormal, critical, in lower case and capitalized).
+        health:interpretationSourceCode / clinical:interpretationSourceCode   the code the
+          SOURCE wrote, VERBATIM, written only when that code is in neither bound value set.
+          It is deliberately unconstrained: no value set, no pattern, no case folding, because
+          constraining it would recreate the loss it exists to prevent.
+      READ THEM TOGETHER. The pair interpretation "A" plus interpretationSourceCode "elevated"
+        says: the source said "elevated", and the nearest ratified code is A (Abnormal). Quote
+        the source code when the user asks what the report actually said; use the normalized
+        code when you compare, sort, count or filter. Reporting only the normalized code
+        replaces the laboratory's own wording with your paraphrase of it. Reporting only the
+        source code makes two records that assert the same thing look different.
+      A record with a normalized code and NO source code is the ordinary case: the source's own
+        code was already in the value set. A missing interpretationSourceCode is never a finding.
+      Both namespace spellings exist for both properties, so apply the two-spellings fallback.
+      ALL 15 absence codes are now accepted on interpretation, not only "unknown". Through v1.14
+        that one code was the only absence code allowed, so every reason for a missing
+        interpretation looked identical. C-CDA nullFlavor NASK, ASKU and NAV are three different
+        clinical facts: do not flatten them back to "unknown", and never present any of them as
+        a finding.
+      VITAL SIGNS ARE CHECKED TOO NOW. clinical:VitalSignShape binds clinical:interpretation to
+        the same 74-value set, at WARNING severity for this version and Violation in a later one.
+        So a vital sign reading "elevated" belongs on clinical:interpretationSourceCode with the
+        nearest ratified code on clinical:interpretation.
+      cascade pod query <pod> --lab-results --json | jq '[.dataTypes["lab-results"].records[]
+        | {test: (.properties["health:testName"] // .properties["clinical:testName"]),
+           interpretation: (.properties["health:interpretation"]
+                            // .properties["clinical:interpretation"]),
+           sourceWord: (.properties["health:interpretationSourceCode"]
+                        // .properties["clinical:interpretationSourceCode"])}]'
   • Health v2.6 / Clinical v1.14 — VALUE SETS AND CARDINALITY NOW MATCH FHIR. Shapes only; no
       class or property changed, and nothing that validated before stops validating. What this
       changes for YOU is what you may assume when reading a pod:
@@ -453,8 +593,9 @@ conditions, labs, allergies or immunizations until you have checked both spellin
         it means the SOURCE carried no interpretation, NOT that the result was normal and NOT
         that it was abnormal. Never present "unknown" as a finding. The pre-v2.6 words are still
         accepted, so a pod may contain both spellings; treat "N" and "normal" as the same claim.
-        NOTE the scope: this is LAB interpretation. Vital-sign clinical:interpretation is still
-        unconstrained, as the Clinical v1.13 note below says.
+        NOTE the scope: v2.6 and v1.14 bound LAB interpretation only, and admitted "unknown" as
+        the only absence code. Health v2.7 and Clinical v1.15, above, admit all 15 absence codes
+        and bind vital-sign interpretation as well.
       MULTI-VALUED CODES. health:labCategory, health:testCode, health:icd10Code,
         health:snomedCode, clinical:snomedCode and clinical:icd10Code may each appear MORE THAN
         ONCE on one record, because FHIR Observation.category and CodeableConcept.coding are
@@ -489,10 +630,13 @@ conditions, labs, allergies or immunizations until you have checked both spellin
       missing clinical:importedAt, clinical:sourceEHR or clinical:fhirResourceId now FAILS
       validation where it used to pass. If \`cascade validate\` starts reporting consultation
       notes on a pod that previously passed, that is this shape, not new corruption.
-      Two value sets are documented but deliberately NOT enforced, because emitted data already
-      violates them: medication clinical:status is emitted as "discontinued" and vital-sign
-      clinical:interpretation as "elevated", neither of which is in the corresponding FHIR R4
-      value set. Do not assume those two fields are constrained to a closed enum.
+      One value set is still documented but deliberately NOT enforced, because emitted data
+      already violates it: medication clinical:status is emitted as "discontinued", which is not
+      in the corresponding FHIR R4 value set, so do not assume that field is a closed enum. The
+      vital-sign half of this note EXPIRED at Clinical v1.15: vital-sign clinical:interpretation
+      IS now bound, at warning severity, to the same 74-value set the lab shapes use, and the
+      "elevated" case it described is now carried on clinical:interpretationSourceCode. See
+      Health v2.7 / Clinical v1.15 above.
   • Clinical v1.10-v1.12 — TRAVERSABLE GRAPH EDGES. Use these instead of re-deriving links by
       matching names or dates yourself:
       clinical:hasEncounter → clinical:Encounter. The record-to-visit edge; FHIR carries it on
