@@ -48,9 +48,38 @@
 #   was not recorded; clinical:Encounter is now validated at all, and coverage:coverageType
 #   is no longer a closed enum. checkup 3.3 is an ICD-10-CM pattern fix with no agent-facing
 #   consequence and is recorded here only to keep the rows in step.
-core=3.4
-health=2.6
-clinical=1.14
+# core 3.5 (2026-08-15): cascade:sourceIdentity, the ORIGIN axis. The prompt now teaches the
+#   three source axes as three different questions and says which one may be keyed on: ORIGIN
+#   (cascade:sourceIdentity, a canonical transport-independent organization token, the only
+#   reconciliation and grouping key), LABEL (clinical:sourceEHR, display only) and INGESTION
+#   (cascade:sourceSystem, the import batch, explicitly never an origin). The scheme prefix is
+#   taught as load-bearing: org: is a derived organization, ns: is only an assigning authority,
+#   and transport: means origin unknown and must never be read as a shared source. The
+#   "records from one organization" query pattern groups on sourceIdentity, not sourceSystem.
+# core 3.6 (2026-08-15): cascade:dataAbsentReason, bound to the 15 FHIR data-absent-reason
+#   codes. The prompt teaches that a record carrying it has NO value, that the reason is an
+#   ANSWER and must never be reported as "no data" or an empty result, that asked-declined /
+#   not-asked / asked-unknown / temp-unknown are four different clinical facts, that the
+#   property explains the absence of the record's VALUE only, and that a raw HL7 v3 NullFlavor
+#   code in the property is an importer defect rather than a code to interpret (the mapping
+#   table is included so the agent can say what should have been written).
+# health 2.7 / clinical 1.15 (2026-08-15): health:interpretationSourceCode and
+#   clinical:interpretationSourceCode, the verbatim escape hatch for a source interpretation
+#   code that is in neither bound value set. The prompt teaches reading it ALONGSIDE the
+#   normalized interpretation so the source's own word stays quotable (interpretation "A" plus
+#   interpretationSourceCode "elevated"), quoting the source code and computing on the
+#   normalized one. The interpretation value set moves from 60 to 74 values (49 selectable HL7
+#   v3 ObservationInterpretation codes, all 15 data-absent-reason codes, 10 retained legacy
+#   words), so the v1.14 note that "unknown" is the only absence code is retired. Vital-sign
+#   clinical:interpretation is now bound to the same set at warning severity, which expires the
+#   v1.13 note that it is unconstrained. clinical 1.15 also opens the PROCEDURE NAME migration
+#   window: clinical:procedureName is canonical and the only spelling a producer may write, but
+#   a C-CDA import path wrote health:procedureName on records typed clinical:Procedure, so the
+#   prompt teaches reading BOTH predicates (canonical first) and adds a procedures query
+#   pattern. Procedure was also missing from the supported-data-types list and is now listed.
+core=3.6
+health=2.7
+clinical=1.15
 coverage=1.4
 checkup=3.3
 pots=1.4

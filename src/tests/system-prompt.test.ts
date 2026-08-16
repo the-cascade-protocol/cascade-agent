@@ -139,6 +139,18 @@ const CONDITIONS: Rec[] = [
   },
 ];
 
+// The source-axis and interpretation properties below carry the core v3.5 /
+// health v2.7 / clinical v1.15 cases:
+//
+//   import-1 and export-1 are ONE organization arriving through two transports,
+//   in two ingestion batches, under two different display labels. They agree on
+//   nothing but cascade:sourceIdentity, which is exactly why that is the only
+//   axis a reconciler may key on.
+//   import-2 carries NO sourceIdentity: the "origin unknown" case, which shares
+//   an ingestion batch with import-1 and must not be merged into its origin.
+//   import-1 and export-2 carry a source interpretation code that is in neither
+//   bound value set; export-1 and import-2 carry a ratified code and no source
+//   code, which is the ordinary case and is not a finding.
 const LAB_RESULTS: Rec[] = [
   {
     id: "urn:cascade:labresult:import-1",
@@ -148,6 +160,11 @@ const LAB_RESULTS: Rec[] = [
       "health:resultValue": "7.1",
       "health:resultUnit": "%",
       "health:performedDate": "2026-03-01",
+      "health:interpretation": "H",
+      "health:interpretationSourceCode": "elevated",
+      "cascade:sourceIdentity": "org:meridian",
+      "clinical:sourceEHR": "Meridian Health System",
+      "cascade:sourceSystem": "apple-health-export",
     },
   },
   {
@@ -159,6 +176,10 @@ const LAB_RESULTS: Rec[] = [
       "clinical:value": "6.4",
       "clinical:unit": "%",
       "clinical:effectiveDate": "2025-09-12",
+      "clinical:interpretation": "N",
+      "cascade:sourceIdentity": "org:meridian",
+      "clinical:sourceEHR": "Meridian Health",
+      "cascade:sourceSystem": "ccda-import-2026-02",
     },
   },
   {
@@ -170,6 +191,11 @@ const LAB_RESULTS: Rec[] = [
       "clinical:valueString": "not detected",
       "clinical:unit": "",
       "clinical:effectiveDate": "2025-01-04",
+      "clinical:interpretation": "ND",
+      "clinical:interpretationSourceCode": "NOT DETECTED by local assay",
+      "cascade:sourceIdentity": "org:northlake",
+      "clinical:sourceEHR": "Northlake Clinic",
+      "cascade:sourceSystem": "ccda-import-2026-02",
     },
   },
   {
@@ -181,6 +207,86 @@ const LAB_RESULTS: Rec[] = [
       "health:resultValue": "0.9",
       "health:resultUnit": "mg/dL",
       "health:performedDate": "2026-03-01",
+      "health:interpretation": "N",
+      "clinical:sourceEHR": "Meridian Health System",
+      "cascade:sourceSystem": "apple-health-export",
+    },
+  },
+];
+
+/**
+ * Vital signs (clinical:VitalSign). Two records carry a value; two carry NO
+ * value and a cascade:dataAbsentReason saying why, with two DIFFERENT reasons.
+ * A pod that only ever said "unknown" could not tell those two apart, which is
+ * what core v3.6 and the 15-code value set fixed.
+ */
+const VITAL_SIGNS: Rec[] = [
+  {
+    id: "urn:cascade:vital:1",
+    type: "clinical:VitalSign",
+    properties: {
+      "clinical:vitalType": "Blood Pressure",
+      "clinical:value": "128/82",
+      "clinical:unit": "mmHg",
+      "clinical:interpretation": "A",
+      // The word the source actually used. Not in either bound value set, so it
+      // rides here verbatim rather than being dropped or forced into the enum.
+      "clinical:interpretationSourceCode": "elevated",
+    },
+  },
+  {
+    id: "urn:cascade:vital:2",
+    type: "clinical:VitalSign",
+    properties: {
+      "clinical:vitalType": "Body Weight",
+      "cascade:dataAbsentReason": "asked-declined",
+    },
+  },
+  {
+    id: "urn:cascade:vital:3",
+    type: "clinical:VitalSign",
+    properties: {
+      "clinical:vitalType": "Oxygen Saturation",
+      "cascade:dataAbsentReason": "not-asked",
+    },
+  },
+  {
+    id: "urn:cascade:vital:4",
+    type: "clinical:VitalSign",
+    properties: {
+      "clinical:vitalType": "Heart Rate",
+      "clinical:value": "68",
+      "clinical:unit": "bpm",
+      "clinical:interpretation": "N",
+    },
+  },
+];
+
+/**
+ * Procedures. ONE class, clinical:Procedure, and two live name predicates
+ * during the clinical v1.15 migration window: the canonical
+ * clinical:procedureName, and health:procedureName as written by a C-CDA import
+ * path onto records it types clinical:Procedure.
+ */
+const PROCEDURES: Rec[] = [
+  {
+    // C-CDA import path: the name is on the health: predicate.
+    id: "urn:cascade:procedure:ccda-1",
+    type: "clinical:Procedure",
+    properties: {
+      "health:procedureName": "Colonoscopy",
+      "clinical:procedureDate": "2024-05-14",
+      "clinical:bodySite": "Colon",
+    },
+  },
+  {
+    // Canonical spelling.
+    id: "urn:cascade:procedure:canonical-1",
+    type: "clinical:Procedure",
+    properties: {
+      "clinical:procedureName": "Appendectomy",
+      "clinical:procedureDate": "2019-11-02",
+      "clinical:bodySite": "Appendix",
     },
   },
 ];
@@ -269,6 +375,8 @@ function envelope(bucket: string, records: Rec[]): unknown {
 const BUCKET_FIXTURES: Record<string, unknown> = {
   conditions: envelope("conditions", CONDITIONS),
   "lab-results": envelope("lab-results", LAB_RESULTS),
+  "vital-signs": envelope("vital-signs", VITAL_SIGNS),
+  procedures: envelope("procedures", PROCEDURES),
   medications: envelope("medications", MEDICATIONS),
   "social-history": envelope("social-history", [
     {
@@ -733,6 +841,282 @@ function main(): void {
     );
   });
 
+  // ── clinical v1.15 procedure-name migration window ─────────────────────────
+
+  test("procedures: the taught filter names procedures written under BOTH predicates", () => {
+    const filter = filters.find((f) => f.includes(".dataTypes.procedures"))!;
+    assert.ok(filter, "the prompt must teach a procedures query");
+    const rows = jq(filter, BUCKET_FIXTURES.procedures) as Array<{ name: string | null }>;
+    const names = rows.map((r) => r.name);
+    assert.ok(
+      names.includes("Appendectomy"),
+      `the canonical clinical:procedureName record must be named; got ${JSON.stringify(names)}`
+    );
+    assert.ok(
+      names.includes("Colonoscopy"),
+      "the C-CDA import record names the procedure on health:procedureName; a filter reading " +
+        `only the canonical spelling reports it as unnamed. got ${JSON.stringify(names)}`
+    );
+    assert.ok(!names.includes(null), `no procedure row may be unnamed; got ${JSON.stringify(names)}`);
+  });
+
+  test("procedures: the both-spellings fallback is load-bearing, not decoration", () => {
+    // Prove the failure the prompt exists to prevent: each single-predicate
+    // filter leaves one real procedure unnamed. If this ever stops holding, the
+    // fixture has drifted and the test above has gone vacuous.
+    for (const predicate of ["clinical:procedureName", "health:procedureName"]) {
+      const rows = jq(
+        `[.dataTypes.procedures.records[] | {name: .properties["${predicate}"]}]`,
+        BUCKET_FIXTURES.procedures
+      ) as Array<{ name: string | null }>;
+      assert.ok(
+        rows.some((r) => r.name === null),
+        `a filter reading only ${predicate} must leave a real procedure unnamed`
+      );
+    }
+  });
+
+  test("the canonical procedure spelling is named as canonical, and the health: one as legacy", () => {
+    const block = PROMPT.split("Procedure names:")[1]?.split("## Common Task Workflows")[0] ?? "";
+    assert.ok(block.length > 0, "the prompt must carry the procedure-name migration-window rule");
+    assert.ok(
+      /clinical:procedureName\s+CANONICAL/.test(block),
+      "clinical:procedureName is the only defined spelling and must be stated as canonical"
+    );
+    assert.ok(
+      /Never WRITE the health: spelling/.test(block),
+      "the health: spelling is accepted for reading only; an agent told merely that both exist " +
+        "will emit the one that is being migrated out"
+    );
+    assert.ok(
+      mentions("health:procedureName") && mentions("clinical:procedureName"),
+      "both predicates must be named or a query written from the prompt misses half the pod"
+    );
+  });
+
+  // ── core v3.5 source axes ──────────────────────────────────────────────────
+
+  test("source axes: the taught filter groups on ORIGIN, uniting one organization across batches", () => {
+    const filter = filters.find((f) => f.includes("cascade:sourceIdentity"))!;
+    assert.ok(filter, "the prompt must teach a records-from-one-organization query");
+    const groups = jq(filter, BUCKET_FIXTURES["lab-results"]) as Array<{
+      origin: string;
+      labels: Array<string | null>;
+      records: number;
+    }>;
+    const meridian = groups.find((g) => g.origin === "org:meridian");
+    assert.ok(meridian, `expected an org:meridian group; got ${JSON.stringify(groups)}`);
+    assert.strictEqual(
+      meridian!.records,
+      2,
+      "the FHIR-path and C-CDA-path records of one organization must land in ONE group even " +
+        "though their ingestion batches and their display labels both differ"
+    );
+    assert.ok(
+      meridian!.labels.length === 2,
+      "the two display labels of that one organization must survive as labels, not be treated " +
+        `as two organizations; got ${JSON.stringify(meridian!.labels)}`
+    );
+    assert.ok(
+      groups.some((g) => g.origin === "origin unknown"),
+      "a record with no cascade:sourceIdentity must be reported as origin unknown, never " +
+        "silently folded into a neighbouring organization"
+    );
+  });
+
+  test("source axes: grouping on the INGESTION batch instead would merge two organizations", () => {
+    // The concrete harm the prompt warns about, demonstrated on the same fixture:
+    // key on cascade:sourceSystem and one batch carries two different origins.
+    const byBatch = jq(
+      '[.dataTypes["lab-results"].records[] | {batch: .properties["cascade:sourceSystem"], ' +
+        'origin: .properties["cascade:sourceIdentity"]}] | group_by(.batch) ' +
+        "| map({batch: .[0].batch, origins: ([.[].origin] | unique | length)})",
+      BUCKET_FIXTURES["lab-results"]
+    ) as Array<{ batch: string; origins: number }>;
+    assert.ok(
+      byBatch.some((b) => b.origins > 1),
+      "the fixture must contain a batch spanning more than one origin, or the warning that " +
+        `cascade:sourceSystem is not a reconciliation key is untested here; got ${JSON.stringify(byBatch)}`
+    );
+  });
+
+  test("the three source axes are taught with sourceSystem ruled out as an origin", () => {
+    for (const term of ["cascade:sourceIdentity", "clinical:sourceEHR", "cascade:sourceSystem"]) {
+      assert.ok(mentions(term), `source axis missing from the prompt: ${term}`);
+    }
+    const block = PROMPT.split("THE THREE SOURCE AXES")[1]?.split("\n  • ")[0] ?? "";
+    assert.ok(block.length > 0, "the prompt must carry the three-axis rule");
+    assert.ok(
+      /NEVER an origin and NEVER a reconciliation key/.test(block),
+      "cascade:sourceSystem is the INGESTION axis; if the prompt does not rule it out explicitly " +
+        "an agent will reach for it, because it is the older and more familiar predicate"
+    );
+    for (const scheme of ["org:", "ns:", "transport:"]) {
+      assert.ok(block.includes(scheme), `the ${scheme} value scheme must be taught`);
+    }
+    assert.ok(
+      /origin unknown/.test(block),
+      "two transport: values mean origin unknown and must not be read as a shared source"
+    );
+  });
+
+  // ── core v3.6 data-absent reasons ──────────────────────────────────────────
+
+  test("the prompt enumerates all 15 data-absent-reason codes, and no others", () => {
+    const block = PROMPT.split(
+      "15 codes of http://terminology.hl7.org/CodeSystem/data-absent-reason:"
+    )[1]?.split("SCOPE:")[0];
+    assert.ok(block, "the prompt must enumerate the data-absent-reason value set");
+    const codes = block!
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((l) => l.split(/\s{2,}/)[0]);
+    assert.deepStrictEqual(
+      [...codes].sort(),
+      [
+        "as-text",
+        "asked-declined",
+        "asked-unknown",
+        "error",
+        "masked",
+        "negative-infinity",
+        "not-a-number",
+        "not-applicable",
+        "not-asked",
+        "not-performed",
+        "not-permitted",
+        "positive-infinity",
+        "temp-unknown",
+        "unknown",
+        "unsupported",
+      ],
+      "the 15 codes of http://terminology.hl7.org/CodeSystem/data-absent-reason. A short list " +
+        "makes the agent map a real code onto a neighbouring one; a long list invents codes " +
+        "the shape rejects"
+    );
+  });
+
+  test("an absent value with a reason is taught as an answer, never as no data", () => {
+    const block = PROMPT.split("WHY A VALUE IS ABSENT")[1]?.split("\n  • ")[0] ?? "";
+    assert.ok(block.length > 0, "the prompt must carry the data-absent-reason rule");
+    assert.ok(
+      /never report it as "no data",\s+"nothing found" or an empty\s+result/.test(block),
+      "the whole point of the property is that the record is NOT an empty result; the prompt " +
+        "must say so in those words or the agent reports a documented refusal as missing data"
+    );
+    assert.ok(
+      /NullFlavor/.test(block) && /importer defect/.test(block),
+      "a raw HL7 v3 NullFlavor code in this property is an importer defect, not a code to " +
+        "interpret; without that the agent will helpfully decode UNK and hide the bug"
+    );
+  });
+
+  test("vital signs: the taught filter surfaces valueless records WITH their distinct reasons", () => {
+    const filter = filters.find((f) => f.includes("cascade:dataAbsentReason"))!;
+    assert.ok(filter, "the prompt must teach a data-absent-reason query");
+    const rows = jq(filter, BUCKET_FIXTURES["vital-signs"]) as Array<{
+      type: string;
+      value: string | null;
+      absent: string | null;
+    }>;
+    assert.strictEqual(
+      rows.length,
+      2,
+      `expected the 2 valueless vitals, got ${JSON.stringify(rows)}`
+    );
+    for (const row of rows) {
+      assert.ok(
+        row.absent !== null,
+        `a valueless record came back with no reason: ${JSON.stringify(row)}. Reporting that ` +
+          "row is reporting 'no data' for a record that explains itself"
+      );
+    }
+    assert.deepStrictEqual(
+      rows.map((r) => r.absent).sort(),
+      ["asked-declined", "not-asked"],
+      "the two reasons are different clinical facts and must not collapse into one"
+    );
+  });
+
+  // ── health v2.7 / clinical v1.15 interpretationSourceCode ──────────────────
+
+  test("interpretation: the taught filter returns the normalized code AND the source's own word", () => {
+    const filter = filters.find((f) => f.includes("interpretationSourceCode"))!;
+    assert.ok(filter, "the prompt must teach reading interpretationSourceCode alongside interpretation");
+    const rows = jq(filter, BUCKET_FIXTURES["lab-results"]) as Array<{
+      test: string | null;
+      interpretation: string | null;
+      sourceWord: string | null;
+    }>;
+    assert.strictEqual(rows.length, 4, "every lab record must survive the filter");
+    for (const row of rows) {
+      assert.ok(
+        row.interpretation !== null,
+        `an interpretation came back null: ${JSON.stringify(row)}. Reading one namespace only ` +
+          "produces exactly this"
+      );
+    }
+    // health: spelling, source code present.
+    assert.ok(
+      rows.some((r) => r.interpretation === "H" && r.sourceWord === "elevated"),
+      `the health:-spelled pair (H, elevated) must both be read; got ${JSON.stringify(rows)}`
+    );
+    // clinical: spelling, source code present.
+    assert.ok(
+      rows.some((r) => r.interpretation === "ND" && r.sourceWord === "NOT DETECTED by local assay"),
+      "the clinical:-spelled source code must be read too, and VERBATIM: it is deliberately " +
+        `unconstrained, so no case folding and no normalization. got ${JSON.stringify(rows)}`
+    );
+    // No source code is the ordinary case, not an error.
+    assert.ok(
+      rows.some((r) => r.interpretation !== null && r.sourceWord === null),
+      "a record whose source code was already ratified carries no interpretationSourceCode, " +
+        "and that must read as ordinary rather than as missing data"
+    );
+  });
+
+  test("the interpretation value set is taught as 74 values, and its three parts add up", () => {
+    const block = PROMPT.split("THE SOURCE'S OWN WORD")[1]?.split("\n  • ")[0] ?? "";
+    assert.ok(block.length > 0, "the prompt must carry the interpretationSourceCode rule");
+    const total = block.match(/(\d+)-value set/);
+    assert.ok(total, "the prompt must state the size of the bound value set");
+    const parts = [
+      Number(block.match(/(\d+) selectable HL7 v3 ObservationInterpretation codes/)?.[1]),
+      Number(block.match(/ALL (\d+)\s+data-absent-reason codes/)?.[1]),
+      Number(block.match(/(\d+) retained pre-v2\.6 words/)?.[1]),
+    ];
+    assert.ok(
+      parts.every((n) => Number.isInteger(n)),
+      `the prompt must break the value set into its three parts; parsed ${JSON.stringify(parts)}`
+    );
+    assert.strictEqual(
+      parts.reduce((a, b) => a + b, 0),
+      Number(total![1]),
+      `the stated parts ${JSON.stringify(parts)} must sum to the stated total ${total![1]}`
+    );
+    assert.strictEqual(
+      Number(total![1]),
+      74,
+      "health v2.7 / clinical v1.15 took the interpretation value set from 60 to 74"
+    );
+  });
+
+  test("the retired claim that vital-sign interpretation is unconstrained is gone", () => {
+    // It was true through clinical v1.14 and is false from v1.15. A stale note
+    // here does not merely under-inform: it actively tells the agent to expect
+    // free text where a value set now applies.
+    assert.ok(
+      !/Vital-sign clinical:interpretation is still\s+unconstrained/.test(PROMPT),
+      "clinical v1.15 bound clinical:VitalSignShape's interpretation to the same value set the " +
+        "lab shapes use; the prompt must not still say it is unconstrained"
+    );
+    assert.ok(
+      mentions("clinical:interpretationSourceCode") && mentions("health:interpretationSourceCode"),
+      "both spellings of the new property must be taught"
+    );
+  });
+
   // ── drift guard ────────────────────────────────────────────────────────────
 
   test("VOCAB_VERSIONS and the prompt's namespace block state the same versions", () => {
@@ -744,7 +1128,7 @@ function main(): void {
     }
     assert.deepStrictEqual(
       { core: declared.core, health: declared.health, clinical: declared.clinical },
-      { core: "3.4", health: "2.6", clinical: "1.14" },
+      { core: "3.6", health: "2.7", clinical: "1.15" },
       "VOCAB_VERSIONS must record the ratified versions this prompt teaches"
     );
     for (const [ns, version] of Object.entries(declared)) {
