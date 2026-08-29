@@ -46,6 +46,8 @@ machine-readable knowledge graphs. All operations run locally with zero network 
     cascade pod query ./my-pod --allergies --json
     cascade pod query ./my-pod --procedures --json
     cascade pod query ./my-pod --encounters --json
+    cascade pod query ./my-pod --documents --json
+    cascade pod query ./my-pod --insurance --json            # CORRECT: --insurance (there is no --coverage)
     cascade pod query ./my-pod --supplements --json
     cascade pod query ./my-pod --social-history --json
     cascade pod query ./my-pod --all --json                  # all types at once
@@ -56,7 +58,10 @@ machine-readable knowledge graphs. All operations run locally with zero network 
 ### Supported Data Types
 Clinical: Medication, VitalSign, Procedure, Coverage, PatientProfile, Encounter,
   MedicationAdministration, ImplantedDevice, ImagingStudy, ClaimRecord, BenefitStatement,
-  ClinicalSocialHistory
+  ClinicalSocialHistory, ClinicalDocument
+Structural SUB-NODES — stored and returned, but not records a person "has one of"
+  (see "Sub-nodes share a bucket" below): clinical:EncounterParticipant (who took part in
+  a visit), cascade:Attachment (a binary rendering of a report or document)
 Clinical records with TWO live spellings (read both — see "Two Spellings" below):
   Condition, LabResult, Allergy, Immunization
 Wellness: HeartRate, BloodPressure, Activity, Sleep, Supplements, SocialHistory
@@ -65,10 +70,10 @@ Conflict Resolution: UserResolution, PendingConflict
 AI Extraction: AIExtractionActivity, AIDiscardedExtraction, SocialHistoryConsent
 
 ### Vocabulary Namespaces
-  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.6 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy, pod export manifest, source identity, data-absent reasons)
-  health:   https://ns.cascadeprotocol.org/health/v1#   (v2.7 — wellness metrics, device data, social history, clinical record classes, wellness containers, verbatim interpretation source codes)
-  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.15 — EHR/clinical records, clinical social history, graph edges, encounters, procedures, verbatim interpretation source codes; 4 classes deprecated in favour of health:)
-  coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.4 — insurance, claims)
+  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.8 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy, pod export manifest, source identity, data-absent reasons, pod attachments)
+  health:   https://ns.cascadeprotocol.org/health/v1#   (v2.8 — wellness metrics, device data, social history, clinical record classes, wellness containers, verbatim interpretation source codes)
+  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.16 — EHR/clinical records, clinical social history, graph edges, encounters + participants, procedures, document status/authorship, business identifiers; 4 classes deprecated in favour of health:)
+  coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.5 — insurance, claims, plan lifecycle status)
   pots:     https://ns.cascadeprotocol.org/pots/v1#     (v1.4 — POTS screening)
   checkup:  https://ns.cascadeprotocol.org/checkup/v1#  (v3.3 — patient-facing summaries)
   workbench: https://ns.cascadeprotocol.org/workbench/v1# (v1-draft — Workbench app objects; notes/ Web Annotation substrate, record overlays, filing labels)
@@ -208,6 +213,79 @@ Never WRITE the health: spelling: it is a defect being migrated out, not an alte
 serialization. Both the constraint that accepts it and the warning that flags it are
 removed together in a later clinical version, at which point the health: term can be
 dropped from queries. Until then, a query naming only clinical:procedureName is incomplete.
+
+## Reading Query JSON — three shapes that silently mislead
+
+\`cascade pod query --json\` does not hand back the RDF graph. It hands back a FLATTENED
+projection of it, and the flattening loses three distinctions in ways that produce a
+confident wrong answer rather than an error. All three are verified against cascade-cli
+0.21.0 output; none of them reports anything when you get it wrong.
+
+### 1. Core-vocabulary properties come back prefixed core:, NEVER cascade:
+
+The core vocabulary has TWO prefixes bound to one namespace
+(https://ns.cascadeprotocol.org/core/v1#), and the reader resolves \`core:\` first. So the
+TTL you write says \`cascade:sourceIdentity\` and the JSON you read back says
+\`core:sourceIdentity\`. Every core term behaves this way — dataProvenance, sourceIdentity,
+sourceSystem, dataAbsentReason, conflictId, resolution, hasAttachment, all of them.
+
+    In the pod (Turtle)          In --json output
+    cascade:dataProvenance   →   "core:dataProvenance"
+    cascade:sourceIdentity   →   "core:sourceIdentity"
+    cascade:dataAbsentReason →   "core:dataAbsentReason"
+    cascade:hasAttachment    →   "core:hasAttachment"
+
+A filter reading \`.properties["cascade:sourceIdentity"]\` returns null on every record in
+a real pod. It does not error: it reports the origin as unknown for data that states it.
+Read core: FIRST and keep cascade: as a fallback, because the two spellings are one
+namespace and a future reader may resolve the other way:
+    (.properties["core:sourceIdentity"] // .properties["cascade:sourceIdentity"])
+This is the same discipline as the health:/clinical: two-spellings rule, for the same
+reason, and it applies to EVERY core: property access in this prompt.
+
+VALUES ARE NOT SHORTENED, only property names. A provenance value comes back as the full
+IRI "https://ns.cascadeprotocol.org/core/v1#EHRVerified", not "cascade:EHRVerified", so
+compare with \`| test("EHRVerified$")\` or split on "#" rather than against a CURIE.
+
+### 2. A repeatable property is JOINED INTO ONE STRING with ", "
+
+\`properties\` maps each predicate to a single string. Where the graph holds a repeatable
+property with several values, the reader joins them with a comma and a space. Two
+participants become one string; two encounter reasons become one string; two document
+authors become one string. Nothing in the JSON marks the value as a list.
+
+    clinical:hasParticipant      "urn:cascade:participant:1, urn:cascade:participant:2"
+    clinical:encounterReason     "Chest pain, Medication review"
+    clinical:documentAuthorName  "Dr. Alice Nguyen, Dr. Ben Ortiz"
+    clinical:businessIdentifier  "http://x.example/visit|VN-4471, urn:oid:1.2.3|88"
+    clinical:participantRoleCode "ATND, PPRF"
+
+SPLITTING IS SAFE ONLY FOR IRIs AND CODES. An IRI cannot contain ", ", so splitting
+\`clinical:hasParticipant\` on ", " always recovers exactly the participants. FREE TEXT IS
+DIFFERENT and must NOT be split: "Chest pain, unspecified" is ONE ICD-10 reason that
+splits into two fake ones, and "Reyes, Carla" is ONE author. For a free-text repeatable
+property, present the joined string as it stands and say it may contain several values —
+do not manufacture a list you cannot verify. This is the clinical:linkedConditionIds
+problem (above) reappearing one layer up: a delimited literal is not a list.
+
+### 3. Sub-nodes share a bucket with the records that own them, and inflate its count
+
+A structural sub-node is stored in the SAME file as its owning record, so it comes back
+as an additional entry in that bucket's \`records\` array, with its own \`.type\`:
+
+    clinical:EncounterParticipant  in the --encounters bucket
+    cascade:Attachment             in whichever bucket its report or document lives in
+                                   (returned as type "core:Attachment")
+
+THE BUCKET'S \`count\` COUNTS THEM. A pod with 2 visits carrying 3 participants reports
+\`"count": 5\` on --encounters, and 2 lab results with 1 attached PDF report \`"count": 3\`.
+Never answer "how many visits/appointments have I had" with the encounters bucket count,
+and never answer it with \`records | length\`. Count only the entries whose \`.type\` is the
+record type:
+    cascade pod query <pod> --encounters --json | jq '[.dataTypes.encounters.records[]
+      | select(.type == "clinical:Encounter")] | length'
+(\`cascade pod import\` does NOT count sub-nodes as records, so an import report saying 44
+encounters and a query bucket saying 57 are both right about different things.)
 
 ## Common Task Workflows
 
@@ -354,6 +432,147 @@ dropped from queries. Until then, a query naming only clinical:procedureName is 
     A procedures answer where some names are null is this, not a pod with unnamed procedures.
   • Clinical v1.7: clinical:Encounter (visit history), clinical:MedicationAdministration (single events),
       clinical:ImplantedDevice (implants with dates), clinical:ImagingStudy (diagnostic imaging metadata)
+  • Clinical v1.16 — WHO WAS AT THE VISIT, WHY IT HAPPENED, AND WHICH ID IS WHICH.
+      THE CARE TEAM IS A GRAPH, NOT A FIELD. clinical:providerName still exists and still
+        holds ONE summary name, but it is no longer the answer to "who did I see". FHIR
+        models participation as a repeating structure, and v1.16 mirrors it:
+        clinical:hasParticipant → clinical:EncounterParticipant nodes, each carrying
+        clinical:participantName, clinical:participantRole ("attender", "referrer",
+        "consultant"), clinical:participantRoleCode (v3-ParticipationType: ATND, PPRF,
+        SPRF, CON, ADM, DIS, REF... extensible, so local codes are conformant) and
+        clinical:participantSpecialty. A visit routinely carries an attender AND a referrer
+        AND an authorizer; providerName shows one of them and does not say which role it
+        played. ANY question about who was involved must traverse the participants.
+        The participants sit in the SAME --encounters bucket as the encounters (see
+        "Sub-nodes share a bucket"), and clinical:hasParticipant is a ", "-joined list of
+        their IRIs, so build a lookup and resolve it:
+      cascade pod query <pod> --encounters --json | jq '
+        (.dataTypes.encounters.records) as $all
+        | ($all | map(select(.type == "clinical:EncounterParticipant"))
+                | map({key: .id, value: .properties}) | from_entries) as $party
+        | [ $all[] | select(.type == "clinical:Encounter")
+            | {date: .properties["clinical:encounterStart"],
+               visitClass: (.properties["clinical:encounterClassDisplay"]
+                            // .properties["clinical:encounterClass"]),
+               reason: .properties["clinical:encounterReason"],
+               team: [ (.properties["clinical:hasParticipant"] // "") | split(", ")[]
+                       | select(. != "") | $party[.]
+                       | {name: .["clinical:participantName"],
+                          role: .["clinical:participantRole"],
+                          specialty: .["clinical:participantSpecialty"]} ]}]
+        | sort_by(.date) | reverse'
+      NEWLY ANSWERABLE, and unanswerable from any pod before v1.16 — if these are absent the
+        source did not state them, which is not the same as the visit not having had them:
+        clinical:encounterReason      why the visit happened, in the chart's own words.
+                                      REPEATABLE and free text, so the joined string must
+                                      NOT be split (see rule 2 above).
+        clinical:admitSource          where the patient came from (e.g. "Emergency
+                                      department"). Its PRESENCE is the structured signal
+                                      that the encounter was an ADMISSION, not an office
+                                      visit — that distinction was unrecoverable before.
+        clinical:dischargeDisposition where they went afterwards ("Home or Self Care").
+        clinical:encounterClassDisplay + clinical:encounterClassSystem, alongside the
+                                      retained clinical:encounterClass CODE. Prefer the
+                                      display for anything shown to a user: the class
+                                      binding is only extensible, so the code may be a
+                                      local value like "5" that means nothing on its own.
+                                      Check the System before mapping a code as ActEncounter.
+        None of these carries a value set — the FHIR bindings are preferred or example
+        strength — so do not treat an unfamiliar value as invalid data.
+      TWO IDENTIFIERS THAT DO NOT JOIN. Never use one where the other belongs:
+        clinical:sourceRecordId    the server-assigned LOGICAL id (FHIR Resource.id). Opaque,
+                                   and stable only inside the system that issued it.
+        clinical:businessIdentifier the identifier the source PUBLISHES for the real-world
+                                   thing — a visit or contact number. REPEATABLE, and written
+                                   in FHIR token form "{system}|{value}" when the source gave
+                                   a system. This is the one that may be compared ACROSS
+                                   transports; sourceRecordId is not. The same string in the
+                                   two spaces means nothing in common, so matching a business
+                                   identifier against a source record id is a false join.
+      DOCUMENTS CARRY TWO STATUSES, AND "IS THIS CURRENT?" READS ONLY ONE OF THEM:
+        clinical:documentReferenceStatus  current | superseded | entered-in-error.
+                                          Whether THIS POD ENTRY is the live pointer to the
+                                          document. THIS is what answers "is this the current
+                                          version / has it been replaced".
+        clinical:status                   preliminary | final | amended | entered-in-error...
+                                          The composition status of the CONTENT itself.
+        They are independent, and the trap is that "amended" is not a currency claim: an
+        amended document is one whose CONTENT was corrected, and it is very often the
+        CURRENT one. A final, unamended note can meanwhile have been superseded by a later
+        filing. Reading clinical:status to decide currency marks live documents as stale and
+        stale ones as live. "entered-in-error" appears in BOTH value sets and means different
+        things in each (the reference was filed in error / the clinical content is repudiated),
+        so always say WHICH status you read it from.
+      AUTHORSHIP IS NOT ATTESTATION:
+        clinical:documentAuthorName  who WROTE it. REPEATABLE (a resident and an attending
+                                     co-sign), ", "-joined in JSON, and a name may itself
+                                     contain a comma — so do not split it.
+        clinical:authenticatorName   who SIGNED it, 0..1. Routinely a different person, and
+                                     it is the signature that carries clinical and legal
+                                     weight. Reporting the author as the signer asserts
+                                     something the source did not say.
+        clinical:providerName remains the single display name (the first author).
+      cascade pod query <pod> --documents --json | jq '[.dataTypes.documents.records[]
+        | {title: .properties["clinical:documentTitle"],
+           date: .properties["clinical:documentDate"],
+           currency: (.properties["clinical:documentReferenceStatus"] // "not stated"),
+           contentStatus: (.properties["clinical:status"] // "not stated"),
+           authors: .properties["clinical:documentAuthorName"],
+           signedBy: .properties["clinical:authenticatorName"]}
+        | select(.currency != "superseded" and .currency != "entered-in-error")]
+        | sort_by(.date) | reverse'
+      Also in v1.16: clinical:observationStatus is DEPRECATED in favour of clinical:status
+        (it was domained on a class no path emits and no shape bound). clinical:status now
+        carries per-class FHIR value sets at warning severity.
+  • Core v3.7 — POD ATTACHMENTS. A record that has a binary rendering (a report PDF, an HTML
+      document) carries cascade:hasAttachment → a cascade:Attachment node. Written as
+      cascade: in Turtle, read back as "core:hasAttachment" / type "core:Attachment" (rule 1).
+      The node holds cascade:attachmentPath (POD-RELATIVE, never absolute — resolve it against
+      the pod directory before reading), cascade:attachmentMediaType (e.g. "application/pdf"),
+      cascade:contentHash + cascade:hashAlgorithm (sha-256; the FILE NAME IS THE DIGEST, so a
+      consumer can verify the bytes against where it read them), cascade:byteSize and
+      cascade:attachmentTitle. The bytes are a FILE, not an inline literal.
+      The attachment node shares its record's bucket and inflates that bucket's count.
+      REPEATABLE: one report legitimately has a PDF and an HTML rendering of one content.
+      NO PRODUCER WRITES THESE YET. cascade-cli 0.21.0 implements none of core v3.7: it emits
+        no cascade:Attachment node anywhere, so a pod built by the current CLI has none, and
+        their absence is NOT a finding and NOT a defect to report. What a DocumentReference
+        import actually writes today is the pre-v3.7 flattening, three predicates on the
+        document record itself, with no node, no hash and no local bytes:
+          clinical:contentType   the media type       clinical:documentUrl  the SOURCE url
+          clinical:documentTitle the title            (an external link, NOT a pod-relative
+                                                       path — it may well not resolve)
+        Read those when asked for a document's file today, and say the pod holds a reference
+        rather than the document itself. Use the v3.7 shape below only if a pod actually
+        carries cascade:Attachment nodes, which means some other producer wrote them.
+      BECAUSE AN ATTACHMENT SHARES THE BUCKET, every filter over a bucket that may hold one
+      must exclude it by type — otherwise it emits a row of nulls per attachment and reports
+      them as unnamed records:
+      cascade pod query <pod> --lab-reports --json | jq '
+        (.dataTypes["lab-reports"].records) as $all
+        | ($all | map(select(.type == "core:Attachment"))
+                | map({key: .id, value: .properties}) | from_entries) as $files
+        | [ $all[] | select(.type != "core:Attachment")
+            | {report: .properties["clinical:panelName"],
+               attachments: [ ((.properties["core:hasAttachment"]
+                                // .properties["cascade:hasAttachment"] // "")
+                               | split(", ")[]) | select(. != "") | $files[.]
+                              | {path: .["core:attachmentPath"],
+                                 type: .["core:attachmentMediaType"]} ]}]'
+      To read one, resolve the path against the pod root and use read_file for a text media
+      type; a PDF is binary and read_file will not render it — report the path instead.
+  • Coverage v1.5 — IS THE PLAN IN FORCE? coverage:status (active | cancelled | draft |
+      entered-in-error) is the FHIR Coverage.status modifier element, and through v1.4 the
+      vocabulary had nowhere to put it. It is NOT coverage:claimStatus or
+      coverage:adjudicationStatus — those describe a claim in the denial/appeal workflow, not
+      whether the plan is in force. A cancelled plan read as active is a WRONG answer to "am I
+      covered", not a missing one, so state the status whenever you report coverage. The
+      property is new, so many existing records will not carry it; absent means the producer
+      never wrote one, and you must say so rather than assuming active.
+      cascade pod query <pod> --insurance --json | jq '[.dataTypes.insurance.records[]
+        | {plan: .properties["coverage:planName"],
+           type: .properties["coverage:coverageType"],
+           status: (.properties["coverage:status"] // "not stated")}]'
   • Coverage v1.3: coverage:ClaimRecord (claims), coverage:BenefitStatement (EOBs),
       coverage:DenialNotice (denials)
   • Health v2.5 — CLINICAL RECORD CLASSES + WELLNESS CONTAINERS.
@@ -395,8 +614,9 @@ dropped from queries. Until then, a query naming only clinical:procedureName is 
       kept-source-b | kept-both | manual-edit), cascade:keptRecord, cascade:discardedRecords,
       cascade:userNote.
       cascade pod query <pod> --conflicts --json | jq '.dataTypes["conflicts"].records[]
-        | {id: .properties["cascade:conflictId"], resolution: .properties["cascade:resolution"],
-           note: .properties["cascade:userNote"]}'
+        | {id: (.properties["core:conflictId"] // .properties["cascade:conflictId"]),
+           resolution: (.properties["core:resolution"] // .properties["cascade:resolution"]),
+           note: (.properties["core:userNote"] // .properties["cascade:userNote"])}'
   • Core v3.0: cascade:AIExtractionActivity (PROV-O activity for AI/NLP extraction runs),
       cascade:AIDiscardedExtraction (discarded extraction candidates kept for audit),
       cascade:SocialHistoryConsent (42 CFR Part 2 consent records).
@@ -499,9 +719,10 @@ dropped from queries. Until then, a query naming only clinical:procedureName is 
                              as evidence of a shared source.
       Group by identity, display the label, and say so when the origin is unknown:
       cascade pod query <pod> --lab-results --json | jq '[.dataTypes["lab-results"].records[]
-        | {origin: (.properties["cascade:sourceIdentity"] // "origin unknown"),
+        | {origin: (.properties["core:sourceIdentity"] // .properties["cascade:sourceIdentity"]
+                    // "origin unknown"),
            label: .properties["clinical:sourceEHR"],
-           batch: .properties["cascade:sourceSystem"]}]
+           batch: (.properties["core:sourceSystem"] // .properties["cascade:sourceSystem"])}]
         | group_by(.origin)
         | map({origin: .[0].origin, labels: ([.[].label] | unique), records: length})'
       workbench:userSourceLabel (below) is the user filing label. It is another LABEL-axis
@@ -543,7 +764,8 @@ dropped from queries. Until then, a query naming only clinical:procedureName is 
       cascade pod query <pod> --vital-signs --json | jq '[.dataTypes["vital-signs"].records[]
         | {type: .properties["clinical:vitalType"],
            value: .properties["clinical:value"],
-           absent: .properties["cascade:dataAbsentReason"]}
+           absent: (.properties["core:dataAbsentReason"]
+                    // .properties["cascade:dataAbsentReason"])}
         | select(.value == null or .absent != null)]'
   • Health v2.7 / Clinical v1.15 (interpretationSourceCode): THE SOURCE'S OWN WORD, KEPT.
       An interpretation now has TWO properties, and a complete answer reads both:

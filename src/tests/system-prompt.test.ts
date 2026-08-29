@@ -104,7 +104,7 @@ const CONDITIONS: Rec[] = [
       "health:conditionName": "Essential hypertension",
       "health:clinicalStatus": "active",
       "health:onsetDate": "2020-01-15",
-      "cascade:dataProvenance": "cascade:EHRVerified",
+      "core:dataProvenance": "https://ns.cascadeprotocol.org/core/v1#EHRVerified",
     },
   },
   {
@@ -115,7 +115,7 @@ const CONDITIONS: Rec[] = [
       "clinical:conditionName": "Type 2 diabetes mellitus",
       "clinical:clinicalStatus": "active",
       "clinical:onsetDate": "2018-06-01",
-      "cascade:dataProvenance": "cascade:EHRVerified",
+      "core:dataProvenance": "https://ns.cascadeprotocol.org/core/v1#EHRVerified",
     },
   },
   {
@@ -162,9 +162,9 @@ const LAB_RESULTS: Rec[] = [
       "health:performedDate": "2026-03-01",
       "health:interpretation": "H",
       "health:interpretationSourceCode": "elevated",
-      "cascade:sourceIdentity": "org:meridian",
+      "core:sourceIdentity": "org:meridian",
       "clinical:sourceEHR": "Meridian Health System",
-      "cascade:sourceSystem": "apple-health-export",
+      "core:sourceSystem": "apple-health-export",
     },
   },
   {
@@ -177,9 +177,9 @@ const LAB_RESULTS: Rec[] = [
       "clinical:unit": "%",
       "clinical:effectiveDate": "2025-09-12",
       "clinical:interpretation": "N",
-      "cascade:sourceIdentity": "org:meridian",
+      "core:sourceIdentity": "org:meridian",
       "clinical:sourceEHR": "Meridian Health",
-      "cascade:sourceSystem": "ccda-import-2026-02",
+      "core:sourceSystem": "ccda-import-2026-02",
     },
   },
   {
@@ -193,9 +193,9 @@ const LAB_RESULTS: Rec[] = [
       "clinical:effectiveDate": "2025-01-04",
       "clinical:interpretation": "ND",
       "clinical:interpretationSourceCode": "NOT DETECTED by local assay",
-      "cascade:sourceIdentity": "org:northlake",
+      "core:sourceIdentity": "org:northlake",
       "clinical:sourceEHR": "Northlake Clinic",
-      "cascade:sourceSystem": "ccda-import-2026-02",
+      "core:sourceSystem": "ccda-import-2026-02",
     },
   },
   {
@@ -209,7 +209,7 @@ const LAB_RESULTS: Rec[] = [
       "health:performedDate": "2026-03-01",
       "health:interpretation": "N",
       "clinical:sourceEHR": "Meridian Health System",
-      "cascade:sourceSystem": "apple-health-export",
+      "core:sourceSystem": "apple-health-export",
     },
   },
 ];
@@ -239,7 +239,7 @@ const VITAL_SIGNS: Rec[] = [
     type: "clinical:VitalSign",
     properties: {
       "clinical:vitalType": "Body Weight",
-      "cascade:dataAbsentReason": "asked-declined",
+      "core:dataAbsentReason": "asked-declined",
     },
   },
   {
@@ -247,7 +247,7 @@ const VITAL_SIGNS: Rec[] = [
     type: "clinical:VitalSign",
     properties: {
       "clinical:vitalType": "Oxygen Saturation",
-      "cascade:dataAbsentReason": "not-asked",
+      "core:dataAbsentReason": "not-asked",
     },
   },
   {
@@ -287,6 +287,201 @@ const PROCEDURES: Rec[] = [
       "clinical:procedureName": "Appendectomy",
       "clinical:procedureDate": "2019-11-02",
       "clinical:bodySite": "Appendix",
+    },
+  },
+];
+
+/**
+ * Encounters, clinical v1.16. TRANSCRIBED FROM REAL `cascade pod query
+ * --encounters --json` OUTPUT (cascade-cli 0.21.0), not from the prompt, and
+ * three properties of that output are load-bearing here:
+ *
+ *   1. The bucket holds BOTH `clinical:Encounter` and the
+ *      `clinical:EncounterParticipant` sub-nodes that hang off them, because
+ *      `pod-data-types.ts` routes the participation into `encounters.ttl` and
+ *      the read path does not filter sub-nodes out. Two visits with three
+ *      participants come back as FIVE records.
+ *   2. `clinical:hasParticipant` is REPEATABLE, and `pod-read.ts` flattens a
+ *      repeated predicate by joining the values with ", ". So the edge arrives
+ *      as one delimited string, not a list, and must be split to be followed.
+ *   3. Core-vocabulary predicates arrive prefixed `core:`, never `cascade:`:
+ *      `shortenIRI` resolves `core:` first because both prefixes are bound to
+ *      the same namespace in `CASCADE_NAMESPACES`.
+ *
+ * A filter that reads `clinical:providerName` instead of traversing gets ONE
+ * name per visit and cannot say what role it played — which is the v1.16
+ * regression this fixture exists to catch.
+ */
+const ENCOUNTERS: Rec[] = [
+  {
+    id: "urn:cascade:encounter:1",
+    type: "clinical:Encounter",
+    properties: {
+      "clinical:encounterClass": "AMB",
+      "clinical:encounterClassDisplay": "ambulatory",
+      "clinical:encounterClassSystem": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+      "clinical:encounterStart": "2026-03-04T14:30:00Z",
+      // Repeatable + free text: joined, and NOT safely splittable.
+      "clinical:encounterReason": "Chest pain, Medication review",
+      // The single summary slot. Retained, but it names only ONE of the three
+      // people below and does not say which role that one played.
+      "clinical:providerName": "Dr. Alice Nguyen",
+      "clinical:facilityName": "Meridian Cardiology",
+      "clinical:sourceRecordId": "enc-99123",
+      "clinical:businessIdentifier": "http://meridian.example/visit|VN-4471",
+      "clinical:hasParticipant": "urn:cascade:participant:1, urn:cascade:participant:2",
+      "core:dataProvenance": "https://ns.cascadeprotocol.org/core/v1#EHRVerified",
+    },
+  },
+  {
+    // An ADMISSION: admitSource/dischargeDisposition are present, which is the
+    // only structured signal separating this from an office visit.
+    id: "urn:cascade:encounter:2",
+    type: "clinical:Encounter",
+    properties: {
+      "clinical:encounterClass": "IMP",
+      "clinical:encounterClassDisplay": "inpatient encounter",
+      "clinical:encounterStart": "2025-11-18T02:10:00Z",
+      "clinical:admitSource": "Emergency department",
+      "clinical:dischargeDisposition": "Home or Self Care",
+      "clinical:providerName": "Dr. Carla Reyes",
+      "clinical:sourceRecordId": "enc-99124",
+      "clinical:hasParticipant": "urn:cascade:participant:3",
+      "core:dataProvenance": "https://ns.cascadeprotocol.org/core/v1#EHRVerified",
+    },
+  },
+  {
+    id: "urn:cascade:participant:1",
+    type: "clinical:EncounterParticipant",
+    properties: {
+      "clinical:participantName": "Dr. Alice Nguyen",
+      "clinical:participantRole": "attender",
+      "clinical:participantRoleCode": "ATND",
+      "clinical:participantSpecialty": "Cardiology",
+    },
+  },
+  {
+    // The REFERRER. Never surfaced by clinical:providerName, and the person a
+    // "who sent me to cardiology" question is actually about.
+    id: "urn:cascade:participant:2",
+    type: "clinical:EncounterParticipant",
+    properties: {
+      "clinical:participantName": "Dr. Ben Ortiz",
+      "clinical:participantRole": "referrer",
+      "clinical:participantRoleCode": "REF",
+      "clinical:participantSpecialty": "Internal Medicine",
+    },
+  },
+  {
+    // Specialty absent: the source did not state one. Not a finding.
+    id: "urn:cascade:participant:3",
+    type: "clinical:EncounterParticipant",
+    properties: {
+      "clinical:participantName": "Dr. Carla Reyes",
+      "clinical:participantRole": "admitter",
+      "clinical:participantRoleCode": "ADM",
+    },
+  },
+];
+
+/**
+ * Clinical documents, clinical v1.16. The two status predicates are
+ * INDEPENDENT, and the fixture is built so that reading the wrong one gives the
+ * wrong answer in BOTH directions:
+ *
+ *   document:1  status "final"   + documentReferenceStatus "superseded"
+ *               A perfectly final note whose reference has been replaced. Read
+ *               clinical:status and you call a stale document current.
+ *   document:2  status "amended" + documentReferenceStatus "current"
+ *               Corrected content that IS the live version. Read
+ *               clinical:status and "amended" looks like a supersession, so you
+ *               hide the document the user actually needs.
+ *
+ * Also: documentAuthorName is repeatable and comma-joined, and the
+ * authenticator is a THIRD person who wrote none of it.
+ */
+const DOCUMENTS: Rec[] = [
+  {
+    id: "urn:cascade:document:1",
+    type: "clinical:ClinicalDocument",
+    properties: {
+      "clinical:documentTitle": "Cardiology consultation note",
+      "clinical:documentDate": "2026-03-04",
+      "clinical:status": "final",
+      "clinical:documentReferenceStatus": "superseded",
+      "clinical:providerName": "Dr. Alice Nguyen",
+      "clinical:documentAuthorName": "Dr. Alice Nguyen, Dr. Ben Ortiz",
+      "clinical:authenticatorName": "Dr. Carla Reyes",
+      "clinical:sourceEHR": "Meridian Health System",
+    },
+  },
+  {
+    id: "urn:cascade:document:2",
+    type: "clinical:ClinicalDocument",
+    properties: {
+      "clinical:documentTitle": "Discharge summary",
+      "clinical:documentDate": "2025-11-20",
+      "clinical:status": "amended",
+      "clinical:documentReferenceStatus": "current",
+      "clinical:documentAuthorName": "Dr. Carla Reyes",
+      "clinical:sourceEHR": "Meridian Health System",
+    },
+  },
+];
+
+/** Insurance plans, coverage v1.5. One cancelled, one active, one silent. */
+const INSURANCE: Rec[] = [
+  {
+    id: "urn:cascade:coverage:1",
+    type: "coverage:InsurancePlan",
+    properties: {
+      "coverage:planName": "Meridian PPO Gold",
+      "coverage:coverageType": "EHCPOL",
+      "coverage:status": "cancelled",
+    },
+  },
+  {
+    id: "urn:cascade:coverage:2",
+    type: "coverage:InsurancePlan",
+    properties: {
+      "coverage:planName": "Northlake HMO",
+      "coverage:coverageType": "primary",
+      "coverage:status": "active",
+    },
+  },
+  {
+    // Pre-v1.5 record: the property is new, so most existing records lack it.
+    // Absent must read as "not stated", never as active.
+    id: "urn:cascade:coverage:3",
+    type: "coverage:InsurancePlan",
+    properties: { "coverage:planName": "Legacy Dental", "coverage:coverageType": "dental" },
+  },
+];
+
+/**
+ * Lab reports with a core v3.7 attachment sub-node sharing the bucket.
+ *
+ * NOTE: cascade-cli 0.21.0 emits NO cascade:Attachment node on any path — core
+ * v3.7 has no producer yet — so this fixture is a forward-looking shape, and
+ * the prompt says as much rather than telling the agent to expect one.
+ */
+const LAB_REPORTS: Rec[] = [
+  {
+    id: "urn:cascade:labreport:1",
+    type: "clinical:LaboratoryReport",
+    properties: {
+      "clinical:panelName": "Comprehensive Metabolic Panel",
+      "core:hasAttachment": "urn:cascade:attachment:1",
+    },
+  },
+  {
+    id: "urn:cascade:attachment:1",
+    type: "core:Attachment",
+    properties: {
+      "core:attachmentPath": "attachments/sha-256/3f786850e387550fdab836ed7e6dc881de23001b",
+      "core:attachmentMediaType": "application/pdf",
+      "core:contentHash": "3f786850e387550fdab836ed7e6dc881de23001b",
+      "core:hashAlgorithm": "sha-256",
     },
   },
 ];
@@ -378,6 +573,10 @@ const BUCKET_FIXTURES: Record<string, unknown> = {
   "vital-signs": envelope("vital-signs", VITAL_SIGNS),
   procedures: envelope("procedures", PROCEDURES),
   medications: envelope("medications", MEDICATIONS),
+  encounters: envelope("encounters", ENCOUNTERS),
+  documents: envelope("documents", DOCUMENTS),
+  insurance: envelope("insurance", INSURANCE),
+  "lab-reports": envelope("lab-reports", LAB_REPORTS),
   "social-history": envelope("social-history", [
     {
       id: "urn:cascade:socialhistory:1",
@@ -804,9 +1003,17 @@ function main(): void {
   });
 
   test("linkedConditionIds is taught as deprecated AND as unfollowable by a graph query", () => {
-    const block = PROMPT.split("clinical:linkedConditionIds")[1] ?? "";
-    assert.ok(block.length > 0, "clinical:linkedConditionIds must be addressed");
-    assert.ok(/DEPRECATED/.test(block), "it must be marked deprecated");
+    // The term is cited in more than one place now (the query-JSON flattening
+    // rule names it as the precedent for "a delimited literal is not a list"),
+    // so anchor on the DEFINITIONAL occurrence rather than the first one. A
+    // passing mention elsewhere must not be able to satisfy this test.
+    const defined = PROMPT.indexOf("clinical:linkedConditionIds is DEPRECATED");
+    assert.notStrictEqual(
+      defined,
+      -1,
+      "clinical:linkedConditionIds must be marked deprecated where it is defined"
+    );
+    const block = PROMPT.slice(defined);
     assert.ok(
       /no graph query can follow/.test(block),
       "the reason matters: it is one delimited literal, so an agent that treats it as an edge " +
@@ -897,7 +1104,7 @@ function main(): void {
   // ── core v3.5 source axes ──────────────────────────────────────────────────
 
   test("source axes: the taught filter groups on ORIGIN, uniting one organization across batches", () => {
-    const filter = filters.find((f) => f.includes("cascade:sourceIdentity"))!;
+    const filter = filters.find((f) => f.includes("core:sourceIdentity"))!;
     assert.ok(filter, "the prompt must teach a records-from-one-organization query");
     const groups = jq(filter, BUCKET_FIXTURES["lab-results"]) as Array<{
       origin: string;
@@ -928,8 +1135,8 @@ function main(): void {
     // The concrete harm the prompt warns about, demonstrated on the same fixture:
     // key on cascade:sourceSystem and one batch carries two different origins.
     const byBatch = jq(
-      '[.dataTypes["lab-results"].records[] | {batch: .properties["cascade:sourceSystem"], ' +
-        'origin: .properties["cascade:sourceIdentity"]}] | group_by(.batch) ' +
+      '[.dataTypes["lab-results"].records[] | {batch: .properties["core:sourceSystem"], ' +
+        'origin: .properties["core:sourceIdentity"]}] | group_by(.batch) ' +
         "| map({batch: .[0].batch, origins: ([.[].origin] | unique | length)})",
       BUCKET_FIXTURES["lab-results"]
     ) as Array<{ batch: string; origins: number }>;
@@ -941,7 +1148,7 @@ function main(): void {
   });
 
   test("the three source axes are taught with sourceSystem ruled out as an origin", () => {
-    for (const term of ["cascade:sourceIdentity", "clinical:sourceEHR", "cascade:sourceSystem"]) {
+    for (const term of ["core:sourceIdentity", "clinical:sourceEHR", "core:sourceSystem"]) {
       assert.ok(mentions(term), `source axis missing from the prompt: ${term}`);
     }
     const block = PROMPT.split("THE THREE SOURCE AXES")[1]?.split("\n  • ")[0] ?? "";
@@ -1013,7 +1220,7 @@ function main(): void {
   });
 
   test("vital signs: the taught filter surfaces valueless records WITH their distinct reasons", () => {
-    const filter = filters.find((f) => f.includes("cascade:dataAbsentReason"))!;
+    const filter = filters.find((f) => f.includes("core:dataAbsentReason"))!;
     assert.ok(filter, "the prompt must teach a data-absent-reason query");
     const rows = jq(filter, BUCKET_FIXTURES["vital-signs"]) as Array<{
       type: string;
@@ -1117,6 +1324,282 @@ function main(): void {
     );
   });
 
+  // ── clinical v1.16 encounter participants ──────────────────────────────────
+
+  test("participants: the taught filter recovers EVERY member of the care team, with roles", () => {
+    const filter = filters.find((f) => f.includes("clinical:hasParticipant"))!;
+    assert.ok(filter, "the prompt must teach a participant-traversal query");
+    const rows = jq(filter, BUCKET_FIXTURES.encounters) as Array<{
+      date: string;
+      team: Array<{ name: string | null; role: string | null; specialty: string | null }>;
+    }>;
+    assert.strictEqual(
+      rows.length,
+      2,
+      `the filter must return the 2 ENCOUNTERS, not the 5 bucket entries; got ${JSON.stringify(rows)}`
+    );
+    const all = rows.flatMap((r) => r.team);
+    assert.strictEqual(
+      all.length,
+      3,
+      "all three participations must be resolved. A filter that forgets to split the " +
+        `", "-joined clinical:hasParticipant recovers only one per visit; got ${JSON.stringify(all)}`
+    );
+    for (const p of all) {
+      assert.ok(p.name !== null, `a participant resolved to a null name: ${JSON.stringify(p)}`);
+      assert.ok(p.role !== null, `a participant resolved with no role: ${JSON.stringify(p)}`);
+    }
+    // The referrer is the whole point: providerName never names them.
+    assert.ok(
+      all.some((p) => p.name === "Dr. Ben Ortiz" && p.role === "referrer"),
+      "the referrer must be recovered; reading clinical:providerName alone returns only " +
+        `the attender and cannot say which role it was. got ${JSON.stringify(all)}`
+    );
+    assert.ok(
+      all.some((p) => p.name === "Dr. Alice Nguyen" && p.specialty === "Cardiology"),
+      "participantSpecialty must be read where the source states it"
+    );
+  });
+
+  test("participants: reading clinical:providerName instead loses two of the three, and every role", () => {
+    // The regression the section exists to prevent, demonstrated on the same
+    // fixture. If this ever stops holding the fixture has drifted and the test
+    // above has gone vacuous.
+    const summary = jq(
+      '[.dataTypes.encounters.records[] | select(.type == "clinical:Encounter") ' +
+        '| .properties["clinical:providerName"]]',
+      BUCKET_FIXTURES.encounters
+    ) as string[];
+    assert.strictEqual(summary.length, 2, "one summary name per encounter");
+    assert.ok(
+      !summary.includes("Dr. Ben Ortiz"),
+      "clinical:providerName must be shown NOT to surface the referrer — that is why a " +
+        "who-was-involved question has to traverse participants"
+    );
+  });
+
+  test("participants: the prompt states providerName is retained but insufficient", () => {
+    for (const term of [
+      "clinical:hasParticipant",
+      "clinical:EncounterParticipant",
+      "clinical:participantName",
+      "clinical:participantRole",
+      "clinical:participantRoleCode",
+      "clinical:participantSpecialty",
+    ]) {
+      assert.ok(mentions(term), `clinical v1.16 participant term missing: ${term}`);
+    }
+    assert.ok(
+      /must traverse the participants/i.test(PROMPT),
+      "the prompt must say that a who-was-involved question traverses participants; without " +
+        "that instruction a model reads the single providerName slot and answers confidently"
+    );
+  });
+
+  // ── clinical v1.16 the two document statuses ───────────────────────────────
+
+  test("documents: the taught filter reads CURRENCY from documentReferenceStatus, not status", () => {
+    const filter = filters.find((f) => f.includes("clinical:documentReferenceStatus"))!;
+    assert.ok(filter, "the prompt must teach a document-currency query");
+    const rows = jq(filter, BUCKET_FIXTURES.documents) as Array<{
+      title: string;
+      currency: string;
+      contentStatus: string;
+    }>;
+    // document:1 is status "final" but documentReferenceStatus "superseded":
+    // a filter reading clinical:status keeps it, which is the wrong answer.
+    assert.ok(
+      !rows.some((r) => r.title === "Cardiology consultation note"),
+      "a document whose REFERENCE is superseded must be excluded even though its content " +
+        `status is "final"; got ${JSON.stringify(rows)}`
+    );
+    // document:2 is status "amended" but documentReferenceStatus "current":
+    // treating "amended" as a supersession hides the live document.
+    assert.ok(
+      rows.some((r) => r.title === "Discharge summary" && r.contentStatus === "amended"),
+      "an AMENDED document whose reference is current must be KEPT — amended means the " +
+        `content was corrected, not that the reference was replaced; got ${JSON.stringify(rows)}`
+    );
+    assert.strictEqual(rows.length, 1, `expected exactly the 1 current document, got ${JSON.stringify(rows)}`);
+  });
+
+  test("documents: the two statuses are taught as independent, with the shared error code called out", () => {
+    const block = PROMPT.split("DOCUMENTS CARRY TWO STATUSES")[1]?.split("\n      AUTHORSHIP")[0] ?? "";
+    assert.ok(block.length > 0, "the prompt must carry the two-status rule");
+    assert.ok(
+      /clinical:documentReferenceStatus/.test(block) && /clinical:status/.test(block),
+      "both predicates must be named in the same block or the distinction is unusable"
+    );
+    for (const value of ["current", "superseded", "entered-in-error"]) {
+      assert.ok(block.includes(value), `the documentReferenceStatus value set must list ${value}`);
+    }
+    assert.ok(
+      /amended/.test(block),
+      'the prompt must address "amended", the value most likely to be misread as a supersession'
+    );
+    assert.ok(
+      /BOTH value sets/.test(block),
+      '"entered-in-error" is in both value sets and means different things in each; the ' +
+        "prompt must say so, or the agent will report one as the other"
+    );
+  });
+
+  test("documents: authorship and attestation are taught as different facts", () => {
+    assert.ok(
+      mentions("clinical:documentAuthorName") && mentions("clinical:authenticatorName"),
+      "both v1.16 attribution predicates must be taught"
+    );
+    const rows = jq(
+      "[.dataTypes.documents.records[] | {authors: .properties[\"clinical:documentAuthorName\"], " +
+        'signer: .properties["clinical:authenticatorName"]}]',
+      BUCKET_FIXTURES.documents
+    ) as Array<{ authors: string; signer: string | null }>;
+    // The signer wrote none of it: reporting the author as the signer asserts
+    // something the source did not say.
+    const signed = rows.find((r) => r.signer !== null)!;
+    assert.ok(
+      !signed.authors.includes(signed.signer!),
+      "the fixture's authenticator must NOT be among that document's authors, or the " +
+        "wrote-it/signed-it distinction is untested here"
+    );
+  });
+
+  // ── clinical v1.16 identifiers ─────────────────────────────────────────────
+
+  test("the two identifier spaces are taught as non-joining", () => {
+    assert.ok(
+      mentions("clinical:businessIdentifier") && mentions("clinical:sourceRecordId"),
+      "both identifier predicates must be named"
+    );
+    const block = PROMPT.split("TWO IDENTIFIERS THAT DO NOT JOIN")[1]?.split("\n      DOCUMENTS")[0] ?? "";
+    assert.ok(block.length > 0, "the prompt must carry the identifier rule");
+    assert.ok(
+      /token form/.test(block) && block.includes("{system}|{value}"),
+      "the FHIR token form is what makes a business identifier comparable across transports; " +
+        "the prompt must give it"
+    );
+    assert.ok(
+      /logical id/i.test(block),
+      "sourceRecordId must be identified as the server-assigned logical id, or an agent will " +
+        "reach for it as a cross-system key"
+    );
+  });
+
+  // ── coverage v1.5 ──────────────────────────────────────────────────────────
+
+  test("coverage: the taught filter reports plan status, and absent reads as not stated", () => {
+    const filter = filters.find((f) => f.includes("coverage:status"))!;
+    assert.ok(filter, "the prompt must teach a coverage-status query");
+    const rows = jq(filter, BUCKET_FIXTURES.insurance) as Array<{ plan: string; status: string }>;
+    assert.strictEqual(rows.length, 3, "every plan must be reported");
+    assert.ok(
+      rows.some((r) => r.plan === "Meridian PPO Gold" && r.status === "cancelled"),
+      "a cancelled plan must be reported as cancelled — reading it as active is a wrong " +
+        `answer to "am I covered", not a missing one; got ${JSON.stringify(rows)}`
+    );
+    assert.ok(
+      rows.some((r) => r.plan === "Legacy Dental" && r.status === "not stated"),
+      "a pre-v1.5 record carries no status, and that must surface as 'not stated' rather " +
+        `than defaulting to active; got ${JSON.stringify(rows)}`
+    );
+  });
+
+  // ── the three query-JSON flattening losses ─────────────────────────────────
+
+  test("core-vocabulary filters read the core: prefix the CLI actually emits", () => {
+    // cascade-cli binds BOTH `core:` and `cascade:` to the core namespace and
+    // `shortenIRI` resolves `core:` first, so every core property arrives as
+    // core:*. A filter naming only cascade:* returns null on every real record.
+    const coreReaders = filters.filter((f) => /"cascade:[a-zA-Z]+"/.test(f));
+    for (const filter of coreReaders) {
+      const props = [...filter.matchAll(/"cascade:([a-zA-Z]+)"/g)].map((m) => m[1]);
+      for (const prop of props) {
+        assert.ok(
+          filter.includes(`"core:${prop}"`),
+          `a filter reads .properties["cascade:${prop}"] without a "core:${prop}" alternative. ` +
+            "The CLI emits core:, so this returns null on every record and reports stated " +
+            "data as absent"
+        );
+      }
+    }
+    assert.ok(
+      /NEVER cascade:/.test(PROMPT),
+      "the prompt must state the core:/cascade: rule explicitly"
+    );
+  });
+
+  test("the sub-node bucket-count inflation is taught, and the taught count filter is right", () => {
+    const block = PROMPT.split("Sub-nodes share a bucket")[1]?.split("## Common Task Workflows")[0] ?? "";
+    assert.ok(block.length > 0, "the prompt must carry the sub-node rule");
+    const filter = filters.find((f) => f.includes('select(.type == "clinical:Encounter")'))!;
+    assert.ok(filter, "the prompt must teach how to count visits without counting participants");
+    const n = jq(filter, BUCKET_FIXTURES.encounters) as number;
+    assert.strictEqual(
+      n,
+      2,
+      "the taught count must return the 2 VISITS. The bucket holds 5 entries, so " +
+        "`records | length` answers 5 — the inflation this rule exists to prevent"
+    );
+    assert.strictEqual(
+      (BUCKET_FIXTURES.encounters as { dataTypes: { encounters: { count: number } } }).dataTypes
+        .encounters.count,
+      5,
+      "the fixture must reproduce the inflated bucket count, or the rule is untested here"
+    );
+  });
+
+  test("the ', ' join is taught as splittable for IRIs and NOT for free text", () => {
+    const block = PROMPT.split("JOINED INTO ONE STRING")[1]?.split("### 3.")[0] ?? "";
+    assert.ok(block.length > 0, "the prompt must carry the multi-value join rule");
+    assert.ok(
+      /SPLITTING IS SAFE ONLY FOR IRIs AND CODES/.test(block),
+      "the prompt must say which values may be split; an unqualified 'split on comma' " +
+        "shatters a free-text value that legitimately contains one"
+    );
+    assert.ok(
+      /Chest pain, unspecified/.test(block),
+      "the prompt must give the concrete counter-example of a single reason containing a comma"
+    );
+    // And prove it: the taught encounter filter must NOT split the reason.
+    const filter = filters.find((f) => f.includes("clinical:hasParticipant"))!;
+    const rows = jq(filter, BUCKET_FIXTURES.encounters) as Array<{ reason: string | null }>;
+    assert.ok(
+      rows.some((r) => r.reason === "Chest pain, Medication review"),
+      "the taught filter must pass the joined reason through intact rather than splitting it"
+    );
+  });
+
+  test("core v3.7 attachments are taught WITH the fact that no producer writes them yet", () => {
+    for (const term of [
+      "cascade:Attachment",
+      "cascade:hasAttachment",
+      "cascade:attachmentPath",
+      "cascade:attachmentMediaType",
+    ]) {
+      assert.ok(mentions(term), `core v3.7 attachment term missing: ${term}`);
+    }
+    const block = PROMPT.split("POD ATTACHMENTS")[1]?.split("\n  • Coverage v1.5")[0] ?? "";
+    assert.ok(block.length > 0, "the prompt must carry the attachment rule");
+    assert.ok(
+      /NO PRODUCER WRITES THESE YET/.test(block),
+      "cascade-cli 0.21.0 emits no cascade:Attachment on any path. Without saying so the " +
+        "agent hunts for attachments that cannot exist and reports their absence as a gap"
+    );
+    // The predicates a DocumentReference import actually writes today.
+    for (const actual of ["clinical:contentType", "clinical:documentUrl"]) {
+      assert.ok(block.includes(actual), `the current flattened spelling ${actual} must be given`);
+    }
+    // And the taught traversal must still work on a pod that does carry them.
+    const filter = filters.find((f) => f.includes("core:hasAttachment"))!;
+    const rows = jq(filter, BUCKET_FIXTURES["lab-reports"]) as Array<{
+      report: string | null;
+      attachments: Array<{ path: string | null; type: string | null }>;
+    }>;
+    assert.strictEqual(rows.length, 1, "the attachment sub-node must not be reported as a report");
+    assert.strictEqual(rows[0].attachments.length, 1, "the attachment must be resolved");
+    assert.strictEqual(rows[0].attachments[0].type, "application/pdf");
+  });
+
   // ── drift guard ────────────────────────────────────────────────────────────
 
   test("VOCAB_VERSIONS and the prompt's namespace block state the same versions", () => {
@@ -1128,8 +1611,13 @@ function main(): void {
     }
     assert.deepStrictEqual(
       { core: declared.core, health: declared.health, clinical: declared.clinical },
-      { core: "3.6", health: "2.7", clinical: "1.15" },
+      { core: "3.8", health: "2.8", clinical: "1.16" },
       "VOCAB_VERSIONS must record the ratified versions this prompt teaches"
+    );
+    assert.strictEqual(
+      declared.coverage,
+      "1.5",
+      "coverage v1.5 added coverage:status, which the prompt now teaches"
     );
     for (const [ns, version] of Object.entries(declared)) {
       const line = PROMPT.split("\n").find((l) => l.trim().startsWith(`${ns}:`) && l.includes("ns.cascadeprotocol.org"));

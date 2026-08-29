@@ -77,9 +77,44 @@
 #   a C-CDA import path wrote health:procedureName on records typed clinical:Procedure, so the
 #   prompt teaches reading BOTH predicates (canonical first) and adds a procedures query
 #   pattern. Procedure was also missing from the supported-data-types list and is now listed.
-core=3.6
-health=2.7
-clinical=1.15
-coverage=1.4
+# core 3.7 / health 2.8 / clinical 1.16 / coverage 1.5 (2026-08-27, wave 4): the release
+#   that made a visit answerable. clinical:hasParticipant -> clinical:EncounterParticipant
+#   (participantName / participantRole / participantRoleCode / participantSpecialty) replaces
+#   "read clinical:providerName and hope": providerName is RETAINED as the single display
+#   name, so the prompt now says every who-was-involved question must TRAVERSE participants,
+#   and gives the lookup-and-resolve filter for doing it. The prompt also gains the two-status
+#   document rule: currency is clinical:documentReferenceStatus (current | superseded |
+#   entered-in-error) and NOT clinical:status (the composition status), whose "amended" means
+#   corrected content on a document that is usually still current. Newly answerable and taught
+#   with them: clinical:encounterReason, clinical:admitSource (its presence is the only signal
+#   an encounter was an admission), clinical:dischargeDisposition, clinical:encounterClassDisplay
+#   (+ClassSystem, because the class binding is extensible so a bare code may be local),
+#   coverage:status (a cancelled plan read as active is a wrong answer to "am I covered"), and
+#   clinical:documentAuthorName 0..* vs clinical:authenticatorName (wrote it vs signed it).
+#   clinical:businessIdentifier (FHIR token form system|value, cross-transport comparable) is
+#   taught as NOT interchangeable with clinical:sourceRecordId (a server-assigned logical id);
+#   the two id spaces do not join. core 3.7 adds cascade:hasAttachment -> cascade:Attachment
+#   (path / mediaType / contentHash+hashAlgorithm), bytes as a pod-relative FILE, not a literal.
+#   health 2.8 carries no agent-facing change and is recorded to keep the rows in step.
+# ALSO FIXED HERE, and not a vocabulary change: every core-vocabulary property comes back
+#   from `cascade pod query --json` prefixed core:, never cascade:, because cascade-cli binds
+#   both prefixes to one namespace and resolves core: first. Every filter in the prompt that
+#   read .properties["cascade:*"] was returning null against a real pod and reporting it as
+#   absent data. Filters now read core: first with a cascade: fallback. The prompt also now
+#   teaches the two other flattening losses in that JSON: repeatable properties are joined
+#   into ONE ", "-delimited string (safe to split only for IRIs and codes, never free text),
+#   and structural sub-nodes share their owner's bucket and are counted in its `count`, so
+#   an --encounters count is visits PLUS participants.
+# core 3.8 (2026-08-28, spec PR #32): defines cascade:PatientReported, a provenance
+#   individual that health.shapes.ttl already named in four sh:in provenance value sets
+#   while core.ttl defined only cascade:SelfReported. No query pattern changes: the prompt
+#   does not enumerate the dataProvenance value set anywhere, so there was no list for the
+#   missing individual to be absent from. The prompt teaches cascade:dataProvenance as the
+#   only origin signal but never lists its values — see the backlog note about enumerating
+#   the trust hierarchy, which is what would make PatientReported vs SelfReported actionable.
+core=3.8
+health=2.8
+clinical=1.16
+coverage=1.5
 checkup=3.3
 pots=1.4
