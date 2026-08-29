@@ -33,12 +33,22 @@ The pre-commit hook will NOT block system-prompt-only changes without updating `
 
 Check `VOCAB_VERSIONS` at the repo root. Compare against `spec/VOCAB_VERSIONS` to see what the agent doesn't yet know about.
 
-### Known gaps (as of 2026-03-20)
+### Known gaps (as of 2026-08-28)
 
-See `VOCAB_VERSIONS` comments. The agent currently has no query patterns for:
-- Encounter, MedicationAdministration, ImplantedDevice, ImagingStudy (Clinical v1.7)
+See `VOCAB_VERSIONS` comments. Encounter gained full query patterns in the wave-4
+update (clinical v1.16), including participant traversal. The agent still has no
+query patterns for:
+- MedicationAdministration, ImplantedDevice, ImagingStudy (Clinical v1.7)
 - ClaimRecord, BenefitStatement, DenialNotice (Coverage v1.3)
 - FHIR passthrough properties (Core v2.8)
+
+Known DRIFT against cascade-cli 0.21.0, not yet fixed: the prompt teaches five
+`cascade pod query` flags that do not exist — `--social-history`,
+`--clinical-social-history`, `--conflicts` (superseded by `--include-bookkeeping`),
+`--notes`, `--assertions`. Their jq examples pass the test suite because the
+fixtures are hand-built; the flag itself errors at runtime. The suite validates
+filter syntax and predicate names, but nothing cross-checks a taught flag against
+`cascade capabilities`.
 
 ## Commit Conventions
 
