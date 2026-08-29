@@ -70,7 +70,7 @@ Conflict Resolution: UserResolution, PendingConflict
 AI Extraction: AIExtractionActivity, AIDiscardedExtraction, SocialHistoryConsent
 
 ### Vocabulary Namespaces
-  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.7 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy, pod export manifest, source identity, data-absent reasons, pod attachments)
+  core:     https://ns.cascadeprotocol.org/core/v1#     (v3.8 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy, pod export manifest, source identity, data-absent reasons, pod attachments)
   health:   https://ns.cascadeprotocol.org/health/v1#   (v2.8 — wellness metrics, device data, social history, clinical record classes, wellness containers, verbatim interpretation source codes)
   clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.16 — EHR/clinical records, clinical social history, graph edges, encounters + participants, procedures, document status/authorship, business identifiers; 4 classes deprecated in favour of health:)
   coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.5 — insurance, claims, plan lifecycle status)

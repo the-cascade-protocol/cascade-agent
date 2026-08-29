@@ -105,7 +105,14 @@
 #   into ONE ", "-delimited string (safe to split only for IRIs and codes, never free text),
 #   and structural sub-nodes share their owner's bucket and are counted in its `count`, so
 #   an --encounters count is visits PLUS participants.
-core=3.7
+# core 3.8 (2026-08-28, spec PR #32): defines cascade:PatientReported, a provenance
+#   individual that health.shapes.ttl already named in four sh:in provenance value sets
+#   while core.ttl defined only cascade:SelfReported. No query pattern changes: the prompt
+#   does not enumerate the dataProvenance value set anywhere, so there was no list for the
+#   missing individual to be absent from. The prompt teaches cascade:dataProvenance as the
+#   only origin signal but never lists its values — see the backlog note about enumerating
+#   the trust hierarchy, which is what would make PatientReported vs SelfReported actionable.
+core=3.8
 health=2.8
 clinical=1.16
 coverage=1.5

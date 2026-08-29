@@ -1611,7 +1611,7 @@ function main(): void {
     }
     assert.deepStrictEqual(
       { core: declared.core, health: declared.health, clinical: declared.clinical },
-      { core: "3.7", health: "2.8", clinical: "1.16" },
+      { core: "3.8", health: "2.8", clinical: "1.16" },
       "VOCAB_VERSIONS must record the ratified versions this prompt teaches"
     );
     assert.strictEqual(
