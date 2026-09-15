@@ -5,6 +5,7 @@
 import assert from 'assert';
 import { Hono } from 'hono';
 import { shouldAdvertise } from '../commands/serve.js';
+import { TIER_TABLE_VERSION } from '../tierTable.js';
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ function buildTestApp(modelAvailable: boolean, modelId: string | null): Hono {
     modelAvailable,
     modelId,
     version: '0.4.0',
+    tierTableVersion: TIER_TABLE_VERSION,
   }));
 
   app.post('/extract', async (c) => {
@@ -57,6 +59,7 @@ function buildTestApp(modelAvailable: boolean, modelId: string | null): Hono {
   app.get('/models', (c) => c.json({
     available: modelAvailable,
     currentModel: modelId,
+    tierTableVersion: TIER_TABLE_VERSION,
     recommendedModels: [
       { id: 'qwen3.5:4b-instruct-q4_K_M', displayName: 'Qwen 3.5 4B (Recommended)', sizeGB: 2.7 },
       { id: 'qwen3.5:2b-instruct-q4_K_M', displayName: 'Qwen 3.5 2B (Compatible)', sizeGB: 1.5 },
@@ -184,6 +187,27 @@ await test('shouldAdvertise stays OFF for other env values (0, empty, arbitrary)
   assert.strictEqual(shouldAdvertise(false, { CASCADE_AGENT_ADVERTISE: '0' }), false);
   assert.strictEqual(shouldAdvertise(false, { CASCADE_AGENT_ADVERTISE: '' }), false);
   assert.strictEqual(shouldAdvertise(false, { CASCADE_AGENT_ADVERTISE: 'yes' }), false);
+});
+
+console.log('\nthe tier table version on both discovery routes\n');
+
+/**
+ * A client on the local ADC path holds its own copy of the tier table and must
+ * be able to find out whether this sidecar is resolving tiers through the same
+ * one BEFORE it sends anything. Both discovery routes carry the version so the
+ * client can refuse the send rather than guess which of two answers is current.
+ */
+await test('GET /health reports the tier table version', async () => {
+  const res = await buildTestApp(true, 'm').fetch(new Request('http://localhost/health'));
+  const body = await res.json() as { tierTableVersion?: string };
+  assert.strictEqual(body.tierTableVersion, TIER_TABLE_VERSION);
+  assert.ok((body.tierTableVersion ?? '').length > 0);
+});
+
+await test('GET /models reports the same tier table version', async () => {
+  const res = await buildTestApp(true, 'm').fetch(new Request('http://localhost/models'));
+  const body = await res.json() as { tierTableVersion?: string };
+  assert.strictEqual(body.tierTableVersion, TIER_TABLE_VERSION);
 });
 
 // ── Summary ───────────────────────────────────────────────────────────────────

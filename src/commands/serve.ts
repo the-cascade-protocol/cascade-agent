@@ -66,6 +66,7 @@ import {
   literatureConfigFromEnv,
   loadLocalEnv,
 } from '../literature.js';
+import { TIER_TABLE_VERSION } from '../tierTable.js';
 
 const DEFAULT_PORT = 8765;
 
@@ -767,6 +768,10 @@ export async function runServeMode(
     modelPresent: documentIntelligence.modelFilePresent,
     modelId: documentIntelligence.currentModelId,
     version: process.env['npm_package_version'] ?? '0.4.0',
+    // The version of the stamped tier table this sidecar resolves tiers
+    // through. A client holding its own copy compares it with its own and
+    // refuses to send rather than guessing which of two answers is current.
+    tierTableVersion: TIER_TABLE_VERSION,
   }));
 
   // Extract endpoint
@@ -931,6 +936,9 @@ export async function runServeMode(
   app.get('/models', (c) => c.json({
     available: documentIntelligence.isAvailable,
     currentModel: documentIntelligence.currentModelId,
+    // The cloud tier table, so a client can check its copy against this one
+    // BEFORE a send rather than discovering the disagreement in a ledger line.
+    tierTableVersion: TIER_TABLE_VERSION,
     recommendedModels: [
       {
         id: 'hf_unsloth_Qwen3.5-4B-Q4_K_M.gguf',

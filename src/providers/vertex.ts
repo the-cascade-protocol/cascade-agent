@@ -47,6 +47,7 @@ import type {
 } from "./types.js";
 import { OpenAICompatProvider } from "./openai-compat.js";
 import type { DescribesEndpoint } from "./trusted-endpoint.js";
+import { knownModelIds, tierModel } from "../tierTable.js";
 
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
@@ -65,14 +66,12 @@ export const DEFAULT_VERTEX_LOCATION = "global";
  * (GA ⇒ BAA-covered). Preview models must never be a default here: pre-GA
  * offerings are excluded from the BAA.
  *
- * Repointed 2026-09-15 from gemini-3.1-flash-lite. gemini-3.5-flash-lite is the
- * latest GA, BAA-covered Flash-Lite, verified by Jed 2026-09-15 against the
- * Gemini Enterprise Agent Platform model page
- * (https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/google-models);
- * BAA coverage confirmed by Jed the same day. This tracks the `standard` row of
- * {@link VERTEX_TIER_MODELS} in ../gateway.ts and must move with it.
+ * It is READ FROM THE STAMPED TIER TABLE SNAPSHOT rather than typed here, so it
+ * cannot drift from the `standard` row it is supposed to track. Repointing the
+ * default is now a sync (`npm run sync:tier-table`), not an edit, and the model
+ * id exists in exactly one human-typed place: the relay's tier table.
  */
-export const DEFAULT_VERTEX_MODEL = "gemini-3.5-flash-lite";
+export const DEFAULT_VERTEX_MODEL: string = tierModel("standard");
 
 /**
  * The API host for a location. `global` has NO region prefix; every other
@@ -307,18 +306,13 @@ export class VertexProvider implements Provider, DescribesEndpoint {
     // the verified Gemini 3.x line served from `global` (the gateway's tier
     // models) so the picker is useful without a metadata round-trip.
     //
-    // The two CURRENT tier models lead. The three ids below them are accepted
-    // LEGACY values: they were reachable tier choices before 2026-09-15 and the
-    // append-only egress ledger still names them, so a list that dropped them
-    // would report a real past destination as unrecognized.
-    const known = [
-      this.model,
-      "gemini-3.5-flash-lite",
-      "gemini-3.8-flash",
-      "gemini-3.1-flash-lite",
-      "gemini-3-flash-preview",
-      "gemini-3.5-flash",
-    ];
+    // The list is the UNION of the tier table's current and retired ids, read
+    // from the stamped snapshot. The retired half is not optional: those ids
+    // were reachable tier choices before a repoint and the append-only egress
+    // ledger still names them, so a list that dropped them would report a real
+    // past destination as unrecognized. A repoint adds to this list by syncing
+    // the table, with nothing to edit here.
+    const known = [this.model, ...knownModelIds()];
     return Array.from(new Set(known)).sort();
   }
 }
