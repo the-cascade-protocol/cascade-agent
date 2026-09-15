@@ -35,6 +35,7 @@ import {
 } from "../gateway.js";
 import { CASCADE_RELAY_HOST } from "../relay/contract.js";
 import { readEgressLog } from "../providers/trusted-endpoint.js";
+import { DEFAULT_VERTEX_MODEL, VertexProvider } from "../providers/vertex.js";
 
 // ── Test harness (mirrors trusted-endpoint.test.ts) ───────────────────────────
 
@@ -124,7 +125,7 @@ async function main(): Promise<void> {
     );
     assert.deepStrictEqual(order, ["ledger", "provider"]);
     assert.strictEqual(res.text, "fake-reply");
-    assert.strictEqual(res.model, "gemini-3.1-flash-lite");
+    assert.strictEqual(res.model, "gemini-3.5-flash-lite");
     assert.strictEqual(res.launchStage, "GA");
     assert.strictEqual(res.provider, "vertex", "no device token means the ADC path");
     assert.strictEqual(res.upstream, undefined, "the ADC path has no relay to quote");
@@ -148,7 +149,7 @@ async function main(): Promise<void> {
     const e = entries[0]!;
     assert.strictEqual(e.provider, "vertex");
     assert.strictEqual(e.endpoint, VERTEX_GLOBAL_ENDPOINT);
-    assert.strictEqual(e.model, "google/gemini-3.1-flash-lite");
+    assert.strictEqual(e.model, "google/gemini-3.5-flash-lite");
     assert.strictEqual(e.purpose, "assertion-grounding");
     assert.strictEqual(e.containsPhi, true);
     assert.strictEqual(e.launchStage, "GA");
@@ -336,9 +337,9 @@ async function main(): Promise<void> {
   await test("D-RMA-6: two neutral tiers, the preview tier is GONE, every row carries provenance", () => {
     assert.deepStrictEqual([...MODEL_TIERS], ["standard", "advanced"]);
     assert.strictEqual(DEFAULT_MODEL_TIER, "standard");
-    assert.strictEqual(VERTEX_TIER_MODELS.standard.model, "gemini-3.1-flash-lite");
+    assert.strictEqual(VERTEX_TIER_MODELS.standard.model, "gemini-3.5-flash-lite");
     assert.strictEqual(VERTEX_TIER_MODELS.standard.launchStage, "GA");
-    assert.strictEqual(VERTEX_TIER_MODELS.advanced.model, "gemini-3.5-flash");
+    assert.strictEqual(VERTEX_TIER_MODELS.advanced.model, "gemini-3.8-flash");
     assert.strictEqual(VERTEX_TIER_MODELS.advanced.launchStage, "GA");
     // gemini-3-flash-preview is unreachable through the client enum entirely.
     for (const tier of MODEL_TIERS) {
@@ -350,6 +351,39 @@ async function main(): Promise<void> {
       assert.ok(
         (VERTEX_TIER_MODELS[tier].baaProvenance ?? "").length > 0,
         `tier ${tier} claims BAA coverage with no provenance recorded`
+      );
+    }
+  });
+
+  await test("the 2026-09-15 repoint: the Vertex default IS the standard row, and the retired ids stay accepted", async () => {
+    // One fact, not two. A hardcoded default that drifts from the tier table is
+    // the gateway dialing one model while the ledger names another.
+    assert.strictEqual(DEFAULT_VERTEX_MODEL, VERTEX_TIER_MODELS.standard.model);
+    assert.strictEqual(DEFAULT_VERTEX_MODEL, "gemini-3.5-flash-lite");
+
+    // The known-model list carries BOTH current tier models plus the retired
+    // ids as legacy values. The egress ledger is append-only, so a pod written
+    // before today names gemini-3.1-flash-lite or gemini-3.5-flash, and a list
+    // that dropped them would report a real past destination as unrecognized.
+    const known = await new VertexProvider().listModels();
+    for (const current of [VERTEX_TIER_MODELS.standard.model, VERTEX_TIER_MODELS.advanced.model]) {
+      assert.ok(known.includes(current), `known models omit the current model ${current}`);
+    }
+    for (const legacy of ["gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-3-flash-preview"]) {
+      assert.ok(known.includes(legacy), `known models dropped the legacy id ${legacy}`);
+    }
+
+    // Both rows record the 2026-09-15 verification, dated and attributed, so
+    // the coverage claim is not a bare boolean.
+    for (const tier of MODEL_TIERS) {
+      const provenance = VERTEX_TIER_MODELS[tier].baaProvenance ?? "";
+      assert.ok(
+        provenance.includes("verified by Jed 2026-09-15"),
+        `tier ${tier} does not record who verified its model id, or when`
+      );
+      assert.ok(
+        provenance.includes("gemini-enterprise-agent-platform/models/google-models"),
+        `tier ${tier} does not cite the page the id was verified against`
       );
     }
   });
