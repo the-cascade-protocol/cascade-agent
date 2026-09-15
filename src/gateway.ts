@@ -99,24 +99,51 @@ export interface TierModel {
  * and that is what makes a provider swap a config change with zero app
  * releases (D-RMA-28).
  */
+/**
+ * The 2026-09-15 repoint. `standard` moved from gemini-3.1-flash-lite to
+ * gemini-3.5-flash-lite (the latest GA Flash-Lite) and `advanced` from
+ * gemini-3.5-flash to gemini-3.8-flash. Both ids, their GA launch stage and
+ * their BAA coverage were verified by Jed 2026-09-15 against the Gemini
+ * Enterprise Agent Platform model page; BAA coverage confirmed by Jed the same
+ * day. The id strings are dot-separated, matching the API convention the
+ * retired ids used; the model page's URL slugs hyphenate the version and are
+ * not the API id.
+ *
+ * The retired ids stay ACCEPTED as legacy values on the provider's known-model
+ * list, because the egress ledger is append-only and a pod written before today
+ * names them.
+ *
+ * MIRRORED in the Workbench's `@cascade-workbench/contracts` gateway module.
+ * The two tables are one fact in two repos; they move together or they drift.
+ */
 export const VERTEX_TIER_MODELS: Record<ModelTier, TierModel> = {
   standard: {
-    model: "gemini-3.1-flash-lite",
+    // Retired 2026-09-15: gemini-3.1-flash-lite.
+    model: "gemini-3.5-flash-lite",
     launchStage: "GA",
     baaCovered: true,
     baaProvenance:
       "Google Cloud HIPAA BAA (cloud.google.com/terms/hipaa-baa); Generative AI on " +
       "Gemini Enterprise Agent Platform is on the covered-services list; verified by " +
-      "delegated research agent 2026-07-26 against cloud.google.com/security/compliance/hipaa",
+      "delegated research agent 2026-07-26 against cloud.google.com/security/compliance/hipaa" +
+      "; model id and GA launch stage verified by Jed 2026-09-15 against the Gemini " +
+      "Enterprise Agent Platform model page (https://docs.cloud.google.com/" +
+      "gemini-enterprise-agent-platform/models/google-models); BAA coverage " +
+      "confirmed by Jed the same day",
   },
   advanced: {
-    model: "gemini-3.5-flash",
+    // Retired 2026-09-15: gemini-3.5-flash.
+    model: "gemini-3.8-flash",
     launchStage: "GA",
     baaCovered: true,
     baaProvenance:
       "Google Cloud HIPAA BAA (cloud.google.com/terms/hipaa-baa); Generative AI on " +
       "Gemini Enterprise Agent Platform is on the covered-services list; verified by " +
-      "delegated research agent 2026-07-26 against cloud.google.com/security/compliance/hipaa",
+      "delegated research agent 2026-07-26 against cloud.google.com/security/compliance/hipaa" +
+      "; model id and GA launch stage verified by Jed 2026-09-15 against the Gemini " +
+      "Enterprise Agent Platform model page (https://docs.cloud.google.com/" +
+      "gemini-enterprise-agent-platform/models/google-models); BAA coverage " +
+      "confirmed by Jed the same day",
   },
 };
 

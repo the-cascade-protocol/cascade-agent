@@ -64,8 +64,15 @@ export const DEFAULT_VERTEX_LOCATION = "global";
  * the Workbench platform plan (§4.1.1) routes high-volume/PHI nodes to
  * (GA ⇒ BAA-covered). Preview models must never be a default here: pre-GA
  * offerings are excluded from the BAA.
+ *
+ * Repointed 2026-09-15 from gemini-3.1-flash-lite. gemini-3.5-flash-lite is the
+ * latest GA, BAA-covered Flash-Lite, verified by Jed 2026-09-15 against the
+ * Gemini Enterprise Agent Platform model page
+ * (https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/google-models);
+ * BAA coverage confirmed by Jed the same day. This tracks the `standard` row of
+ * {@link VERTEX_TIER_MODELS} in ../gateway.ts and must move with it.
  */
-export const DEFAULT_VERTEX_MODEL = "gemini-3.1-flash-lite";
+export const DEFAULT_VERTEX_MODEL = "gemini-3.5-flash-lite";
 
 /**
  * The API host for a location. `global` has NO region prefix; every other
@@ -299,8 +306,15 @@ export class VertexProvider implements Provider, DescribesEndpoint {
     // model availability is location-specific. Return the configured model plus
     // the verified Gemini 3.x line served from `global` (the gateway's tier
     // models) so the picker is useful without a metadata round-trip.
+    //
+    // The two CURRENT tier models lead. The three ids below them are accepted
+    // LEGACY values: they were reachable tier choices before 2026-09-15 and the
+    // append-only egress ledger still names them, so a list that dropped them
+    // would report a real past destination as unrecognized.
     const known = [
       this.model,
+      "gemini-3.5-flash-lite",
+      "gemini-3.8-flash",
       "gemini-3.1-flash-lite",
       "gemini-3-flash-preview",
       "gemini-3.5-flash",
