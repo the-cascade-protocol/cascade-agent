@@ -1,12 +1,12 @@
 {
   "stamp": {
-    "source": "config/tiers.example.google.json via publishTierTable (endpoint not yet deployed)",
+    "source": "https://relay.cascadeagenticlabs.com/v1/tiers",
     "syncedAt": "2026-09-15",
-    "etag": "google-2026-09-15"
+    "etag": "google-2026-09-15b"
   },
   "table": {
     "schema": "cascade-tier-table/1",
-    "version": "google-2026-09-15",
+    "version": "google-2026-09-15b",
     "tiers": {
       "standard": {
         "providerDisplay": "Google Gemini Enterprise Agent Platform",
@@ -15,9 +15,9 @@
         "launchStage": "GA",
         "baaCovered": true,
         "baaProvenance": {
-          "agreement": "Google Cloud HIPAA Business Associate Agreement",
+          "agreement": "Google Cloud Platform HIPAA Business Associate Addendum",
           "acceptedOn": "2026-07-27",
-          "sourceUrl": "https://cloud.google.com/terms/hipaa-baa"
+          "sourceUrl": "https://cloud.google.com/security/compliance/hipaa"
         }
       },
       "advanced": {
@@ -27,9 +27,9 @@
         "launchStage": "GA",
         "baaCovered": true,
         "baaProvenance": {
-          "agreement": "Google Cloud HIPAA Business Associate Agreement",
+          "agreement": "Google Cloud Platform HIPAA Business Associate Addendum",
           "acceptedOn": "2026-07-27",
-          "sourceUrl": "https://cloud.google.com/terms/hipaa-baa"
+          "sourceUrl": "https://cloud.google.com/security/compliance/hipaa"
         }
       }
     },
@@ -46,6 +46,11 @@
       },
       {
         "model": "gemini-3.5-flash",
+        "launchStage": "GA",
+        "baaCovered": true
+      },
+      {
+        "model": "gemini-3.6-flash",
         "launchStage": "GA",
         "baaCovered": true
       }
