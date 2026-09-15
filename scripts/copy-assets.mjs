@@ -15,4 +15,12 @@ const dstPrompts = join(root, 'dist', 'prompts');
 mkdirSync(dstPrompts, { recursive: true });
 cpSync(srcPrompts, dstPrompts, { recursive: true });
 
-console.log('Assets copied: src/prompts -> dist/prompts');
+// Copy the stamped tier table snapshot. The tier table loader reads it at
+// module load, so a dist/ without it cannot resolve a tier to a model and the
+// process refuses to start rather than guessing one.
+const srcData = join(root, 'src', 'data');
+const dstData = join(root, 'dist', 'data');
+mkdirSync(dstData, { recursive: true });
+cpSync(srcData, dstData, { recursive: true });
+
+console.log('Assets copied: src/prompts -> dist/prompts, src/data -> dist/data');

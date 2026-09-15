@@ -36,6 +36,7 @@ import {
 import { CASCADE_RELAY_HOST } from "../relay/contract.js";
 import { readEgressLog } from "../providers/trusted-endpoint.js";
 import { DEFAULT_VERTEX_MODEL, VertexProvider } from "../providers/vertex.js";
+import { TIER_TABLE_VERSION } from "../tierTable.js";
 
 // ── Test harness (mirrors trusted-endpoint.test.ts) ───────────────────────────
 
@@ -373,17 +374,35 @@ async function main(): Promise<void> {
       assert.ok(known.includes(legacy), `known models dropped the legacy id ${legacy}`);
     }
 
-    // Both rows record the 2026-09-15 verification, dated and attributed, so
-    // the coverage claim is not a bare boolean.
+    // Both rows still back the coverage claim with a named agreement, the date
+    // it was accepted and a citable URL, so it is not a bare boolean.
+    //
+    // It no longer names a VERIFIER, and that is deliberate rather than a loss.
+    // The provenance is now read from the relay's published tier table, which is
+    // served unauthenticated, so the publisher drops the operator-only fields:
+    // the free-form note and the person who checked. A person's name and email
+    // do not go on an endpoint anyone can curl. Who verified the row is recorded
+    // where it belongs, in the relay's own config and its deploy checklist, and
+    // what reaches a client is the table VERSION the claim was read from, which
+    // is what makes the claim checkable against its source.
     for (const tier of MODEL_TIERS) {
       const provenance = VERTEX_TIER_MODELS[tier].baaProvenance ?? "";
       assert.ok(
-        provenance.includes("verified by Jed 2026-09-15"),
-        `tier ${tier} does not record who verified its model id, or when`
+        provenance.includes("HIPAA"),
+        `tier ${tier} does not name the agreement covering it`
+      );
+      assert.match(
+        provenance,
+        /accepted \d{4}-\d{2}-\d{2}/,
+        `tier ${tier} does not record the date the agreement was accepted`
       );
       assert.ok(
-        provenance.includes("gemini-enterprise-agent-platform/models/google-models"),
-        `tier ${tier} does not cite the page the id was verified against`
+        provenance.includes("https://"),
+        `tier ${tier} does not cite a URL a reader can open`
+      );
+      assert.ok(
+        provenance.includes(TIER_TABLE_VERSION),
+        `tier ${tier} does not say which tier table version the claim was read from`
       );
     }
   });

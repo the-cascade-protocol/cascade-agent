@@ -24,7 +24,7 @@ import type {
  *
  * This is the distinct, catchable signal that separates "the model said
  * nothing" from "the model returned empty on purpose." Reasoning tiers
- * (gemini-3-flash-preview; Qwen thinking) can burn the entire `max_tokens`
+ * (a thinking Gemini Flash model; Qwen thinking) can burn the entire `max_tokens`
  * budget on hidden reasoning and hand back `content === ""` with a
  * `finish_reason` of `length` — a failure that previously slipped through as
  * a valid empty string and was then treated as a real (empty) result by a
@@ -212,7 +212,7 @@ export class OpenAICompatProvider implements Provider {
 
     if (this.providerName === "google") {
       // Use Google's native REST endpoint — the OpenAI-compat /models doesn't return a usable list.
-      // Returns models with names like "models/gemini-2.5-flash"; strip the prefix and
+      // Returns models with names like "models/<model-id>"; strip the prefix and
       // filter to generative (chat-capable) models only.
       const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${this.apiKey}&pageSize=100`;
       const res = await fetch(url);

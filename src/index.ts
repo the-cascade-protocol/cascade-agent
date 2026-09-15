@@ -46,6 +46,29 @@ export {
   DEFAULT_MODEL_TIER,
   podEgressLogPath,
 } from "./gateway.js";
+
+// The stamped tier table. A model id is typed by a human in exactly one place
+// (the relay's tier table); this package reads a stamped copy of the document
+// that table publishes, and a consumer that needs to compare versions with this
+// sidecar reads TIER_TABLE_VERSION.
+export {
+  TIER_TABLE_VERSION,
+  TIER_TABLE_SCHEMA,
+  TierTableError,
+  loadTierTableSnapshot,
+  retiredModelFacts,
+  tierModel,
+  tierRow,
+  tierTableStamp,
+  knownModelIds,
+} from "./tierTable.js";
+export type {
+  PublishedTier,
+  PublishedTierTable,
+  PublishedRetiredModel,
+  TierTableSnapshot,
+  TierTableStamp,
+} from "./tierTable.js";
 export type {
   ModelTier,
   ModelLaunchStage,

@@ -31,6 +31,7 @@
  */
 
 import { join } from "path";
+import { TIER_TABLE_VERSION, tierRow } from "./tierTable.js";
 import {
   VertexProvider,
   qualifyVertexModel,
@@ -91,61 +92,65 @@ export interface TierModel {
 }
 
 /**
- * Tier → concrete model on the LOCAL ADC/Vertex path. Both are served only
- * from `location: global`.
+ * Tier -> concrete model on the LOCAL ADC/Vertex path, READ FROM THE STAMPED
+ * SNAPSHOT (`./tierTable.ts`). Both tiers are served only from
+ * `location: global`.
  *
- * This table does NOT apply to the relay path: the relay holds its own tier
- * table (provider, model, endpoint, region, launch stage, coverage, pricing)
- * and that is what makes a provider swap a config change with zero app
- * releases (D-RMA-28).
+ * No model id is typed here any more, and that is the whole point. A model id
+ * is typed by a human in exactly ONE place in this ecosystem: the relay's tier
+ * table. This package holds a stamped copy of the document that table publishes
+ * at `GET /v1/tiers`, `npm run sync:tier-table` is the only thing that rewrites
+ * it, and `-- --check` says whether the copy still matches its source. Two
+ * copies that disagreed used to be something a reader had to notice; now it is
+ * a diff that exits 1.
+ *
+ * This table still does NOT describe the relay path. The relay holds the
+ * authoritative table (provider, model, endpoint, region, launch stage,
+ * coverage, pricing) and that is what makes a provider swap a config change
+ * with zero app releases (D-RMA-28). What the relay actually used arrives in
+ * response headers and is recorded as reported, never as verified.
+ *
+ * The export is a set of GETTERS, so the export name, the shape and every call
+ * site are unchanged: `VERTEX_TIER_MODELS[tier].model` reads the snapshot on
+ * access.
+ *
+ * `baaProvenance` is composed from the published provenance object: which
+ * agreement, the date it was accepted, a citable URL, and the version of the
+ * table the claim was read from. The publisher deliberately omits the operator
+ * note and the named verifier, because that document is served unauthenticated
+ * and a person's email does not belong on it.
+ *
+ * Retired ids are not here either. They live in the snapshot's `retired` array,
+ * read through `retiredModelFacts`, because the egress ledger is append-only
+ * and a pod written before a repoint still names them.
  */
-/**
- * The 2026-09-15 repoint. `standard` moved from gemini-3.1-flash-lite to
- * gemini-3.5-flash-lite (the latest GA Flash-Lite) and `advanced` from
- * gemini-3.5-flash to gemini-3.8-flash. Both ids, their GA launch stage and
- * their BAA coverage were verified by Jed 2026-09-15 against the Gemini
- * Enterprise Agent Platform model page; BAA coverage confirmed by Jed the same
- * day. The id strings are dot-separated, matching the API convention the
- * retired ids used; the model page's URL slugs hyphenate the version and are
- * not the API id.
- *
- * The retired ids stay ACCEPTED as legacy values on the provider's known-model
- * list, because the egress ledger is append-only and a pod written before today
- * names them.
- *
- * MIRRORED in the Workbench's `@cascade-workbench/contracts` gateway module.
- * The two tables are one fact in two repos; they move together or they drift.
- */
-export const VERTEX_TIER_MODELS: Record<ModelTier, TierModel> = {
-  standard: {
-    // Retired 2026-09-15: gemini-3.1-flash-lite.
-    model: "gemini-3.5-flash-lite",
-    launchStage: "GA",
-    baaCovered: true,
-    baaProvenance:
-      "Google Cloud HIPAA BAA (cloud.google.com/terms/hipaa-baa); Generative AI on " +
-      "Gemini Enterprise Agent Platform is on the covered-services list; verified by " +
-      "delegated research agent 2026-07-26 against cloud.google.com/security/compliance/hipaa" +
-      "; model id and GA launch stage verified by Jed 2026-09-15 against the Gemini " +
-      "Enterprise Agent Platform model page (https://docs.cloud.google.com/" +
-      "gemini-enterprise-agent-platform/models/google-models); BAA coverage " +
-      "confirmed by Jed the same day",
-  },
-  advanced: {
-    // Retired 2026-09-15: gemini-3.5-flash.
-    model: "gemini-3.8-flash",
-    launchStage: "GA",
-    baaCovered: true,
-    baaProvenance:
-      "Google Cloud HIPAA BAA (cloud.google.com/terms/hipaa-baa); Generative AI on " +
-      "Gemini Enterprise Agent Platform is on the covered-services list; verified by " +
-      "delegated research agent 2026-07-26 against cloud.google.com/security/compliance/hipaa" +
-      "; model id and GA launch stage verified by Jed 2026-09-15 against the Gemini " +
-      "Enterprise Agent Platform model page (https://docs.cloud.google.com/" +
-      "gemini-enterprise-agent-platform/models/google-models); BAA coverage " +
-      "confirmed by Jed the same day",
-  },
-};
+function tierModelRow(tier: ModelTier): TierModel {
+  const row = tierRow(tier);
+  const model: TierModel = {
+    model: row.model,
+    // The published stage is an open string (the relay records what the
+    // provider said). Anything that is not PREVIEW is treated as GA, which is
+    // safe because launch stage GATES NOTHING: `baaCovered` is the gate.
+    launchStage: row.launchStage === "PREVIEW" ? "PREVIEW" : "GA",
+    baaCovered: row.baaCovered,
+  };
+  if (row.baaProvenance) {
+    model.baaProvenance =
+      `${row.baaProvenance.agreement}; accepted ${row.baaProvenance.acceptedOn}; ` +
+      `${row.baaProvenance.sourceUrl}; read from tier table ${TIER_TABLE_VERSION}`;
+  }
+  return model;
+}
+
+export const VERTEX_TIER_MODELS: Record<ModelTier, TierModel> = Object.defineProperties(
+  {} as Record<ModelTier, TierModel>,
+  Object.fromEntries(
+    MODEL_TIERS.map((tier) => [
+      tier,
+      { get: () => tierModelRow(tier), enumerable: true, configurable: false },
+    ]),
+  ) as PropertyDescriptorMap,
+);
 
 export const DEFAULT_MODEL_TIER: ModelTier = "standard";
 
@@ -368,6 +373,20 @@ export interface ResolvedRoute {
   provider: GatewayProvider;
   /** What goes in the ledger's `model` field for the app-verified hop. */
   ledgerModel: string;
+  /**
+   * What the response reports as `model`.
+   *
+   * It lives on the RESOLVED ROUTE rather than being recomputed at the return
+   * statement, so there is structurally no way for it to come from the request.
+   * The request cannot name a model at all (a caller picks a TIER), and a
+   * response that reported anything other than what the resolved route dialed
+   * would be an attestation about a destination that was never used.
+   *
+   * On the ADC path that is the tier's concrete model id. On the relay path it
+   * is the tier, because the relay chooses the model and the app does not know
+   * which one until the relay says so on the reconciliation line.
+   */
+  responseModel: string;
 }
 
 export interface GatewayDeps {
@@ -488,7 +507,7 @@ export async function completeViaGateway(
     // The relay resolves the model, so the app-verified hop records the TIER,
     // not a model id the client did not choose. The concrete model arrives on
     // the reconciliation line, marked as the relay's account of it.
-    route = { route: "cascade-relay", provider, ledgerModel: tier };
+    route = { route: "cascade-relay", provider, ledgerModel: tier, responseModel: tier };
   } else {
     // The tier models (Gemini 3.x) exist ONLY at location "global"; pin it
     // explicitly so a stray VERTEX_LOCATION env override cannot 404 the call.
@@ -501,6 +520,7 @@ export async function completeViaGateway(
       route: "vertex",
       provider,
       ledgerModel: qualifyVertexModel(tierInfo.model),
+      responseModel: tierInfo.model,
     };
   }
   const provider = route.provider;
@@ -642,7 +662,7 @@ export async function completeViaGateway(
   return {
     text,
     provider: route.route,
-    model: route.route === "cascade-relay" ? tier : tierInfo.model,
+    model: route.responseModel,
     modelTier: tier,
     launchStage: tierInfo.launchStage,
     endpoint,
