@@ -1,12 +1,12 @@
 {
   "stamp": {
     "source": "https://relay.cascadeagenticlabs.com/v1/tiers",
-    "syncedAt": "2026-09-15",
-    "etag": "google-2026-09-15b"
+    "syncedAt": "2026-09-17",
+    "etag": "google-2026-09-17"
   },
   "table": {
     "schema": "cascade-tier-table/1",
-    "version": "google-2026-09-15b",
+    "version": "google-2026-09-17",
     "tiers": {
       "standard": {
         "providerDisplay": "Google Gemini Enterprise Agent Platform",
