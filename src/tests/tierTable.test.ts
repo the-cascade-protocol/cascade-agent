@@ -359,7 +359,7 @@ await test("--check reports a DIFF and does not write when the tables differ", a
     fetchImpl: stubFetch(publishedFixture({ version: "google-2027-01-01" })),
   });
   assert.strictEqual(result.outcome, "differs");
-  assert.ok(result.diff?.includes("-  \"version\": \"google-2026-09-15b\""));
+  assert.ok(result.diff?.includes("-  \"version\": \"google-2026-09-17\""));
   assert.ok(result.diff?.includes("+  \"version\": \"google-2027-01-01\""));
   assert.strictEqual(readFileSync(SNAPSHOT, "utf8"), before, "--check wrote to the snapshot");
 });
@@ -388,7 +388,7 @@ await test("a write records the ETag from the response header", async () => {
     assert.strictEqual(written.stamp.etag, "google-2026-09-15");
     assert.strictEqual(written.stamp.syncedAt, "2026-12-01");
     assert.strictEqual(written.stamp.source, "https://relay.invalid/v1/tiers");
-    assert.strictEqual(written.table.version, "google-2026-09-15b");
+    assert.strictEqual(written.table.version, "google-2026-09-17");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
