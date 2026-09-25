@@ -112,9 +112,14 @@
 #   missing individual to be absent from. The prompt teaches cascade:dataProvenance as the
 #   only origin signal but never lists its values — see the backlog note about enumerating
 #   the trust hierarchy, which is what would make PatientReported vs SelfReported actionable.
+# clinical 1.20 (2026-09-25, spec PR #72): defines clinical:documentType and restates the
+#   clinical:narrativeText comment, plus three new SHACL shapes. Not RDF this agent touches:
+#   its narrativeText-named fields are plain JSON response body fields, not RDF predicates,
+#   and documentType is not queried here. No prompt or query-pattern change; the namespace
+#   version string in src/system-prompt.ts is bumped to match, per the drift-guard test.
 core=3.8
 health=2.8
-clinical=1.16
+clinical=1.20
 coverage=1.5
 checkup=3.3
 pots=1.4
