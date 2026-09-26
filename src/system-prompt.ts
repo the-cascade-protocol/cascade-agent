@@ -72,7 +72,7 @@ AI Extraction: AIExtractionActivity, AIDiscardedExtraction, SocialHistoryConsent
 ### Vocabulary Namespaces
   core:     https://ns.cascadeprotocol.org/core/v1#     (v3.8 — identity, provenance, Pod structure, conflict resolution, AI extraction/generation, caregiver-proxy, pod export manifest, source identity, data-absent reasons, pod attachments)
   health:   https://ns.cascadeprotocol.org/health/v1#   (v2.8 — wellness metrics, device data, social history, clinical record classes, wellness containers, verbatim interpretation source codes)
-  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.16 — EHR/clinical records, clinical social history, graph edges, encounters + participants, procedures, document status/authorship, business identifiers; 4 classes deprecated in favour of health:)
+  clinical: https://ns.cascadeprotocol.org/clinical/v1# (v1.20 — EHR/clinical records, clinical social history, graph edges, encounters + participants, procedures, document status/authorship, business identifiers; 4 classes deprecated in favour of health:)
   coverage: https://ns.cascadeprotocol.org/coverage/v1# (v1.5 — insurance, claims, plan lifecycle status)
   pots:     https://ns.cascadeprotocol.org/pots/v1#     (v1.4 — POTS screening)
   checkup:  https://ns.cascadeprotocol.org/checkup/v1#  (v3.3 — patient-facing summaries)
